@@ -102,19 +102,123 @@ AI 模型配置，默认模型设置。API 认证信息。
 }
 ```
 
+**mode**
 
-
-- `mode`：`merge` 表示和已有配置合并，`replace` 表示完全替换
-- `providers`：服务商列表，可以同时配置多个服务商
-- 每个服务商下：
-  - `baseUrl`：API 地址
-  - `apiKey`：你的密钥
-  - `api`：调用协议，**OpenAI GPT 模型必须用 `openai-responses`**，Claude 用 `anthropic-messages`
-  - `models`：该服务商下可用的模型列表
+`merge` 表示和已有配置合并，`replace` 表示完全替换。
 
 
 
+**providers**
 
+服务商列表，可以同时配置多个服务商。
+
+
+
+**providers.baseUrl**
+
+API 地址。
+
+
+
+**providers.apiKey**
+
+你的密钥。
+
+
+
+**providers.api**
+
+调用协议。OpenAI GPT 模型必须用 `openai-responses`，Claude 用 `anthropic-messages`。
+
+
+
+**providers.models**
+
+该服务商下可用的模型列表。
+
+
+
+# agents
+
+```
+{
+  "defaults": {
+    "model": {
+      "primary": "服务商名称/模型id",
+      "fallbacks": [
+        "备用服务商名称/模型id"
+      ]
+    },
+    "models": {
+      "服务商名称/模型id": {
+        "alias": "别名"
+      }
+    },
+    "imageModel": {
+      "primary": "服务商名称/模型id"
+    },
+    "thinkingDefault": "low",
+    "verboseDefault": "off",
+    "elevatedDefault": "on",
+    "timeoutSeconds": 600,
+    "contextTokens": 200000
+  }
+}
+```
+
+
+
+**defaults.model.primary**
+
+默认使用的模型，格式为 `服务商名称/模型id`。
+
+
+
+**defaults.model.fallbacks**
+
+主模型不可用时的备用模型列表。
+
+
+
+**defaults.models**
+
+为特定模型设置别名，方便在对话中切换（如 `@gpt`）。
+
+
+
+**defaults.imageModel.primary**
+
+图像任务使用的模型（可与 `primary` 相同）。
+
+
+
+**defaults.thinkingDefault**
+
+思维深度默认值，可选 `"low"` / `"medium"` / `"high"` / `"auto"`。
+
+
+
+**defaults.verboseDefault**
+
+是否开启详细输出，`"off"` 关闭 / `"on"` 开启。
+
+
+
+**defaults.elevatedDefault**
+
+提权模式（允许更高权限操作），`"on"` 开启 / `"off"` 关闭。
+
+
+
+**defaults.timeoutSeconds**
+
+单次请求超时秒数，默认 600。
+
+
+
+**defaults.contextTokens**
+
+上下文窗口大小（token 数），默认 272000。
 
 
 
@@ -133,7 +237,7 @@ AI 模型配置，默认模型设置。API 认证信息。
 
 
 
-## 基本配置
+
 
 **port**
 
@@ -163,9 +267,9 @@ AI 模型配置，默认模型设置。API 认证信息。
 
 
 
+# **telegram** 
 
-
-
+一个通讯平台，类似微信。一般不用可忽略。
 
 
 
