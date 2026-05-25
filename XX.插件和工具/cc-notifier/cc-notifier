@@ -1,0 +1,99 @@
+# cc-notifier
+
+仓库：`https://github.com/trentmcnitt/cc-notifier`
+
+## 使用步骤
+
+1. 只适合 macOS 使用。
+2. 安装依赖：
+
+```bash
+brew install --cask hammerspoon
+brew install terminal-notifier
+```
+
+3. 配置 `~/.hammerspoon/init.lua`：
+
+```lua
+require("hs.ipc")
+require("hs.window")
+require("hs.window.filter")
+require("hs.timer")
+```
+
+4. 重载 Hammerspoon：
+
+```bash
+hs -c "hs.timer.doAfter(0, hs.reload)"
+```
+
+5. 安装 `cc-notifier`：
+
+```bash
+git clone https://github.com/trentmcnitt/cc-notifier.git
+cd cc-notifier
+./install.sh
+```
+
+6. 在 `~/.claude/settings.json` 里配置 hooks：
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.cc-notifier/cc-notifier init"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.cc-notifier/cc-notifier notify"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|elicitation_dialog",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.cc-notifier/cc-notifier notify"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.cc-notifier/cc-notifier cleanup"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+7. 重启 Claude Code。
+8. 新开一个会话验证：
+   完成任务、等待输入、弹权限确认时，应收到系统通知。
+9. 需要手机推送时，在 `env` 里加 `PUSHOVER_API_TOKEN` 和 `PUSHOVER_USER_KEY`。
+10. 需要排障时，把 hook 命令改成 `--debug` 版本，再查看日志：
+
+```bash
+tail -f ~/.cc-notifier/cc-notifier.log
+```

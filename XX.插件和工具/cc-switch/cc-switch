@@ -1,0 +1,18 @@
+# cc-switch
+
+仓库：`https://github.com/farion1231/cc-switch`
+
+## 使用步骤
+
+1. 从 Release 页面下载 Windows 安装包 `CC-Switch-v{version}-Windows.msi`，或下载便携版 `CC-Switch-v{version}-Windows-Portable.zip`。
+2. 安装并启动 `cc-switch`。
+3. 第一次启动时，先导入本机已有的 Claude Code、Codex、Gemini CLI、OpenClaw 配置，作为默认配置。
+4. 点击 `Add Provider`，选择预设渠道或自己填写自定义配置。
+5. 在主界面选中目标 Provider，点击 `Enable` 切换。
+6. 重启终端或对应 CLI 工具使配置生效。
+7. 如果是 Claude Code，切换后通常不需要重启，直接继续用。
+8. 需要管理 MCP 时，点击 `MCP`，添加服务后按应用维度开启同步。
+9. 需要管理 Prompt 时，点击 `Prompts`，创建 Markdown 预设并启用同步。
+10. 需要管理 Skill 时，点击 `Skills`，从 GitHub 仓库浏览并一键安装。
+11. 需要查历史会话时，点击 `Sessions`，查看、搜索、恢复不同工具的对话记录。
+12. 需要切回官方登录时，新增一个 `Official Login` Provider，切换过去后重新走登录流程。
