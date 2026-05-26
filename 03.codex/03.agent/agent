@@ -1,0 +1,53 @@
+# 所属位置
+
+- 项目级：`<repo>/.codex/agents/<agent-name>.toml`
+- 用户级：`~/.codex/agents/<agent-name>.toml`
+- 并发和嵌套深度：`<repo>/.codex/config.toml` 或 `~/.codex/config.toml` 的 `[agents]`
+
+# 配置
+`<repo>/.codex/config.toml配置`
+
+```toml
+[features]
+# 开启多 Agent 功能
+multi_agent = true
+
+[agents]
+max_threads = 6          # 最大并发子线程数
+max_depth = 1            # 最大嵌套深度（0=根，1=允许一级子代理）
+
+[agents.explorer]
+description = "只读代码库探索器，用于追踪执行路径、收集证据"
+config_file = "agents/explorer.toml"
+
+[agents.reviewer]
+description = "PR 审查专家：正确性、安全性、缺失测试"
+config_file = "agents/reviewer.toml"
+```
+
+# 编写具体subAgent
+创建 agents/explorer.toml 文件：
+```
+model = "gpt-5.3-codex-spark"      # 追求速度可用 spark 模型
+model_reasoning_effort = "medium"  # 推理力度：低/中/高
+sandbox_mode = "read-only"         # 只读模式
+
+developer_instructions = """
+你是一位代码库探索专家。
+- 专注追踪真实执行路径，引用具体的文件和符号
+- 除非父代理明确要求，否则不要提出修复建议
+- 优先使用快速搜索和定点文件读取，避免全量扫描
+"""
+
+# subAgent依赖的MCP能力配置 
+[mcp_servers.chrome_devtools]
+url = "http://localhost:3000/mcp"
+startup_timeout_sec = 20    
+```
+
+# 使用
+
+- 在提示词里直接点名 Agent：`Use @gitnote-researcher to find the Codex notes in this workspace.`
+- 多个 Agent 可以在一个任务里并行分工，再由主会话汇总
+- Agent 默认继承当前 sandbox；需要时在单个 TOML 里覆盖 `sandbox_mode`
+

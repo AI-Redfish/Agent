@@ -1,0 +1,26 @@
+# 所属位置
+
+- 用户级：`~/.codex/config.toml`
+- 项目级：`<repo>/.codex/config.toml`
+- 服务注册：`[mcp_servers.<server-name>]`
+
+# 安装
+
+- 在 `config.toml` 里注册 MCP Server
+- 示例：
+
+```toml
+[mcp_servers.context7]
+enabled = false
+command = "cmd"
+args = ["/c", "npx", "-y", "@upstash/context7-mcp"]
+```
+
+- 需要鉴权时用 `env`，不要把密钥写进仓库
+
+# 使用
+
+- 从项目目录启动 Codex，确保项目级 `config.toml` 被加载
+- 在对话里直接要求 Codex 调用已注册的 MCP 工具
+- 不生效时先查 `enabled`、`command`、`args`、`env`
+

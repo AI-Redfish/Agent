@@ -1,0 +1,30 @@
+# Codex Skill
+
+## 所属位置
+
+- 项目级：`<repo>/.agents/skills/<skill-name>/SKILL.md`
+- 用户级：`~/.codex/skills/<skill-name>/SKILL.md`
+- 系统级：`~/.codex/skills/.system/<skill-name>/SKILL.md`
+- 启用控制：`<repo>/.codex/config.toml` 或 `~/.codex/config.toml` 的 `[[skills.config]]`
+
+## 安装
+
+- 创建目录：`New-Item -ItemType Directory -Force -Path ".codex\skills\<skill-name>"`
+- 创建文件：`New-Item -ItemType File -Force -Path ".codex\skills\<skill-name>\SKILL.md"`
+- 在 `config.toml` 里注册：
+
+```toml
+[[skills.config]]
+path = ".codex/skills/gitnote-workflow"
+enabled = true
+```
+
+- 安装已有 Skill：`$skill-installer <skill-name>`
+
+## 使用
+
+- 显式调用：`$gitnote-workflow`
+- 隐式触发：用户任务命中 `description`
+- 查看可用 Skill：`/skills`
+- 禁用 Skill：把 `enabled` 改成 `false`
+
