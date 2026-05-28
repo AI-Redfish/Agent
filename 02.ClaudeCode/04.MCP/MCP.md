@@ -192,10 +192,162 @@ claude code自己根据理解判断是否调用指定MCP。
 
 
 
+# cccp
+Claude Code 的并行处理引擎。
+
+## 安装
+```
+# 全局安装
+npm install -g mcp-cccp-server
+
+# 验证安装
+npx mcp-cccp-server --version
+```
+
+或者手动修改.mcp.son文件。
+```
+# windows环境
+{
+  "mcpServers": {
+    "cccp": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "mcp-cccp-server"
+      ],
+      "env": {
+        "CCCP_PROVIDER": "api",
+        "ANTHROPIC_AUTH_TOKEN": "your-api-key-here",
+        "CCCP_API_CONCURRENCY": "4"
+      }
+    }
+  }
+}
+```
+
+**关键配置参数**
+
+|环境变量   |   默认值  |   说明|
+|-------   |   ------  |-------|
+|CCCP_PROVIDER  |api	|api(直调API) / claude(通过CLI) / codex(通过Codex)|
+|ANTHROPIC_AUTH_TOKEN   |-	|Anthropic API Key（provider=api时必填）|
+|CCCP_API_CONCURRENCY	|8	|API模式最大并发数（建议2-4）|
+|CCCP_CLI_CONCURRENCY	|2	|CLI模式最大并发数|
+|CCCP_AUTO_REPAIR	|true	|失败任务自动重试|
+|CCCP_CACHE_TTL_MS	|3600000	|结果缓存时间（1小时）|
 
 
+<br><br><br>
+**核心工具**
+
+安装成功后，Claude Code 中会出现三个 MCP 工具：
+
+|工具名 |功能	|何时使用|
+|-------   |   ------  |-------|
+|mcp__cccp__parallel_code	|并行执行多个独立任务	|批量处理、同时分析多个文件|
+|mcp__cccp__sequential_code	|串行执行，任务间可传递结果 |需要上一步输出作为下一步输入|
+|mcp__cccp__ping	|健康检查	|验证 MCP Server 是否正常运行|
+
+<br>
+
+## 使用
+
+**场景1：并行分析多个文件**
+```
+请用 parallel_code 同时分析 src/ 目录下的 auth.js、api.js、db.js 这三个文件，分别总结它们的主要功能和潜在问题
+```
+
+Claude 实际调用的代码：
+```
+mcp__cccp__parallel_code({
+  provider: "api",
+  tasks: [
+    {
+      name: "分析 auth.js",
+      task: "分析 src/auth.js 的主要功能和潜在问题"
+    },
+    {
+      name: "分析 api.js",
+      task: "分析 src/api.js 的主要功能和潜在问题"
+    },
+    {
+      name: "分析 db.js",
+      task: "分析 src/db.js 的主要功能和潜在问题"
+    }
+  ]
+})
+```
+
+**场景2：批量生成 API 模块**
+
+```
+用 parallel_code 帮我同时生成 User、Product、Order 三个 API 模块的基础代码框架，每个模块包含 CRUD 操作，输出到 src/api/ 目录下
+```
+参数说明：使用 outputPath 可以让结果自动写入文件，不占用主会话的上下文。
+```
+mcp__cccp__parallel_code({
+  provider: "api",
+  tasks: [
+    {
+      name: "生成 User API",
+      task: "生成 User 模块的 CRUD API 代码",
+      outputPath: "src/api/user.js"
+    },
+    {
+      name: "生成 Product API",
+      task: "生成 Product 模块的 CRUD API 代码",
+      outputPath: "src/api/product.js"
+    },
+    {
+      name: "生成 Order API",
+      task: "生成 Order 模块的 CRUD API 代码",
+      outputPath: "src/api/order.js"
+    }
+  ]
+})
+```
 
 
+***场景3：有依赖关系的任务（串行）***
+```
+我需要：1. 先读取 database/schema.sql 了解表结构
+2. 基于表结构生成 TypeScript 类型定义
+3. 基于类型定义生成 CRUD 操作函数
+请用 sequential_code 串行执行
+```
+实际执行的代码
+```
+mcp__cccp__sequential_code({
+  provider: "api",
+  tasks: [
+    {
+      name: "读取 schema",
+      task: "读取 database/schema.sql 并总结所有表结构"
+    },
+    {
+      name: "生成类型定义",
+      task: "基于上一步的结果，为每个表生成 TypeScript 接口定义"
+    },
+    {
+      name: "生成 CRUD 函数",
+      task: "基于上一步的类型定义，生成对应的 CRUD 操作函数"
+    }
+  ]
+})
+```
+⚠️ sequential_code 会自动将上一步的输出作为 $PREV_RESULT 变量传递给下一步，你只需在 task 中引用即可。
+
+**场景4：健康检查**
+```
+请用 ping 检查 CCCP MCP Server 是否正常运行
+```
+
+## 对比其他并发工具
+**subAgent**
+subAgent的并发性更好，但是cccp的成本更低。
 
 
-
+原因：cccp需要切换进程性能更差。但是cccp完全独立上下文，没有skill，额外mcp的加载，更少的上下文。
