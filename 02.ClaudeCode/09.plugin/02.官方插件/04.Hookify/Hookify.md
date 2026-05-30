@@ -2,12 +2,26 @@
 
 用自然语言自动帮你生成对应的钩子（Hook）规则文件。
 
+
+
 命令格式
 
 ```
+# 安装
+/plugin install hookify
+
 /hookify [你的自然语言描述]
 ```
 
+
+# 任务提醒
+```
+# 监听任务完成（Stop 事件）
+/hookify When task completes, show Windows toast notification saying "Task completed"
+
+# 监听需用户确认（Notification 事件）
+/hookify When Claude needs user confirmation, show Windows toast notification saying "Action required - please check Claude Code"
+```
 
 
 # 案例

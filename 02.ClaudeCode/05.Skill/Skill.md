@@ -74,7 +74,17 @@ skill-creator 的作用，简单说就是：帮你把“一个常做的工作流
 - “测试并改进我现有的 skill”
 
  
+# skill状态
+claude code可以设置各个skill的状态。
+```
+/skills
+```
+通过如上命令列出所有安装的skill，移动到指定的skill，按空格键切换skill的状态。
 
+- on：启动。
+- name-only：每次对话仅加载这个skill的name，不会携带description。
+- user-only：只有用户手动触发，明确声明使用这个skill，这个skill才会被触发。
+- off。关闭这个skill。
 
 
 # Claude Code 中怎么使用 Skill
