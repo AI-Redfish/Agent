@@ -2,7 +2,7 @@
 
 ## 所属位置
 
-- 项目级：`<repo>/.agents/skills/<skill-name>/SKILL.md`
+- 项目级：`<repo>/.codex/skills/<skill-name>/SKILL.md`
 - 用户级：`~/.codex/skills/<skill-name>/SKILL.md`
 - 系统级：`~/.codex/skills/.system/<skill-name>/SKILL.md`
 - 启用控制：`<repo>/.codex/config.toml` 或 `~/.codex/config.toml` 的 `[[skills.config]]`
