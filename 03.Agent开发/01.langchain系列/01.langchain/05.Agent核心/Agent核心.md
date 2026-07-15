@@ -2,178 +2,166 @@
 
 ## Agent
 
-Agent 是由模型驱动的执行循环。
+Agent 可以理解成由模型驱动的执行循环。
 
-模型会根据用户目标判断是否调用工具，把工具结果写回消息历史，再继续推理，直到得到最终答案。
+基本过程是：
 
-
-
-**执行流程**
-
-```
-用户输入 -> 模型判断 -> 工具调用 -> 工具结果 -> 再次推理 -> 最终回答
+```text
+用户输入 -> 模型判断 -> 工具调用 -> 工具结果写回 -> 继续推理 -> 最终回复
 ```
 
-
-
-**使用场景**
-
-- 需要调用外部 API
-- 需要查询数据库或知识库
-- 需要分步骤执行任务
-- 需要模型自己判断是否调用工具
-
-
-
-## 第一个 Agent
-
-使用 `create_agent()` 创建 Agent，并传入模型、工具和系统提示词。
-
-
-
-**使用**
-
-```
-from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
-from langchain_core.tools import tool
-
-@tool
-def get_weather(city: str) -> str:
-    """查询城市天气。"""
-    return f'{city} 今天晴。'
-
-model = init_chat_model('deepseek-chat', model_provider='deepseek')
-
-agent = create_agent(
-    model=model,
-    tools=[get_weather],
-    system_prompt='你是一个会使用工具的助手。'
-)
-```
-
-
-
-# Agent 配置
 
 ## create_agent()
 
-`create_agent()` 是创建 LangChain Agent 的主要入口。
+`create_agent()` 是 LangChain Agent 的核心入口。
 
 
-
-**参数说明**
+**常见参数**
 
 | 参数 | 说明 |
 | :-- | :-- |
-| `model` | 模型实例或模型配置 |
+| `model` | 模型实例或模型标识 |
 | `tools` | 工具列表 |
 | `system_prompt` | 系统提示词 |
 | `middleware` | 中间件列表 |
 | `response_format` | 结构化输出格式 |
-| `checkpointer` | 会话状态保存 |
+| `checkpointer` | 会话状态持久化 |
 | `store` | 跨会话存储 |
-| `interrupt_before` | 指定节点前暂停 |
-| `interrupt_after` | 指定节点后暂停 |
 
 
+## 核心组件
 
-## AgentState
+Agent 页面把核心组件拆成：
 
-`AgentState` 是 Agent 执行过程中的状态容器。
+- model
+- tools
+- system prompt
+- name
+
+高级概念再扩展到：
+
+- structured output
+- memory
+- streaming
+- middleware
 
 
+# Agent 调用
 
-**字段说明**
+## invoke()
 
-| 字段 | 说明 |
-| :-- | :-- |
-| `messages` | 消息历史 |
-| `structured_response` | 结构化输出 |
-| `jump_to` | 流程跳转控制 |
+**使用**
 
+```python
+result = agent.invoke(
+    {"messages": [{"role": "user", "content": "帮我查一下北京天气"}]}
+)
+```
+
+
+## stream()
+
+可以一边执行一边把消息、步骤或自定义事件流出来，适合调试和前端展示。
 
 
 # 中间件
 
 ## Middleware
 
-Middleware 用于在 Agent、模型、工具的生命周期中插入横切逻辑。
+Middleware 用来在 Agent、模型、工具执行过程里插入横切逻辑。
 
 
+## 中间件作用
 
-**钩子说明**
+- 动态改 prompt
+- 动态选模型
+- 动态选工具
+- 工具调用监控
+- 重试、降级、日志
+- 人工干预
+- 上下文裁剪
 
-| 钩子 | 时机 |
+
+## 常见挂钩
+
+| 类型 | 说明 |
 | :-- | :-- |
-| `before_agent` | Agent 开始前 |
-| `after_agent` | Agent 完成后 |
-| `before_model` | 模型调用前 |
-| `after_model` | 模型调用后 |
-| `wrap_model_call` | 包裹模型调用 |
-| `wrap_tool_call` | 包裹工具调用 |
+| 节点样式钩子 | 在指定节点前后处理 |
+| 包装样式钩子 | 包住一次模型或工具调用 |
 
 
+## 自定义中间件
 
-## wrap_model_call
-
-`wrap_model_call` 适合做模型重试、降级、缓存、日志统计。
-
+可以用装饰器，也可以用类实现。
 
 
 **使用**
 
-```
+```python
 from langchain.agents.middleware import wrap_model_call
 
 @wrap_model_call
 def log_model_call(request, handler):
-    print('before model')
+    print("before model")
     response = handler(request)
-    print('after model')
+    print("after model")
     return response
 ```
 
 
+## 内置中间件
 
-## wrap_tool_call
+预置中间件页覆盖的重点包括：
 
-`wrap_tool_call` 适合做工具参数清洗、权限检查、重试、错误包装。
-
-
-
-**使用**
-
-```
-from langchain.agents.middleware import wrap_tool_call
-
-@wrap_tool_call
-def log_tool_call(request, handler):
-    print(request.tool_call)
-    return handler(request)
-```
+- 人工干预
+- 模型调用限制
+- 工具调用限制
+- 模型 fallback
+- PII 检测
+- 工具重试
+- 模型重试
+- 上下文编辑
+- 文件系统相关能力
+- 子智能体
 
 
+# Guardrails
 
-**建议**
+## 防护栏
 
-- 简单问答不要强行上 Agent。
-- Agent 适合需要工具调用和多步骤执行的任务。
-- 工具、状态、中间件要保持边界清晰。
-- 复杂 Agent 必须配合日志或 LangSmith 观察执行链路。
+Guardrails 页的重点是：在 Agent 执行前后增加“安全、规则、质量”检查。
 
 
+## 两类防护
 
-# 参考链接
+| 类型 | 说明 |
+| :-- | :-- |
+| 确定性防护栏 | 基于规则、正则、白名单等 |
+| 基于模型的防护栏 | 用模型判断是否违规或是否继续 |
 
-## 教程来源
 
-- https://www.runoob.com/langchain/langchain-first-agent.html
-- https://www.runoob.com/langchain/langchain-create_agent.html
-- https://www.runoob.com/langchain/langchain-agent-workflow.html
-- https://www.runoob.com/langchain/langchain-agent-state.html
-- https://www.runoob.com/langchain/langchain-middleware-concepts.html
-- https://www.runoob.com/langchain/langchain-before-after-model.html
-- https://www.runoob.com/langchain/langchain-wrap-model-call.html
-- https://www.runoob.com/langchain/langchain-wrap-tool-call.html
-- https://www.runoob.com/langchain/langchain-before-after-agent.html
+## 常见场景
+
+- PII 检测
+- 高风险工具审批
+- 输出合规检查
+- 执行前拦截危险请求
+
+
+## 组合方式
+
+官方支持：
+
+- Agent 执行前防护
+- Agent 执行后防护
+- 多种 guardrails 组合
+
+
+# 结论
+
+LangChain Agent 的核心不是“让模型回答”，而是：
+
+- 让模型按规则工作
+- 让工具在合适时机被调用
+- 让中间件接管复杂控制逻辑
+- 让 guardrails 把风险挡在关键节点上

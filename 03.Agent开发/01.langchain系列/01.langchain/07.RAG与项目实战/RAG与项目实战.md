@@ -1,160 +1,179 @@
-# RAG 基础
+# 检索基础
 
-## RAG
+## Retrieval
 
-RAG 是 Retrieval-Augmented Generation，意思是“检索增强生成”。
-
-它先从知识库检索相关资料，再让模型基于资料回答。
+检索页的主线是：先建立知识库，再把检索能力接入模型或 Agent。
 
 
+**基础流程**
 
-**执行流程**
-
-```
-文档加载 -> 文档切分 -> Embedding -> 向量存储 -> 检索 -> 拼接上下文 -> 模型回答
+```text
+文档加载 -> 文本切分 -> Embedding -> 向量存储 -> 检索 -> 生成答案
 ```
 
 
+## 构建模块
 
-## 文档加载与切分
+检索页把核心模块拆成：
 
-把原始文档加载为 Document，再切分成适合检索的小块。
+- 文档加载器
+- 文本分割器
+- 嵌入模型
+- 向量存储
+- 检索器
 
+
+## 从检索到 RAG
+
+检索不是终点，RAG 才是完整问答链路。
+
+
+**常见架构**
+
+| 架构 | 说明 |
+| :-- | :-- |
+| 两步 RAG | 先检索，再回答 |
+| 代理式 RAG | Agent 决定是否检索、怎么检索 |
+| 混合 RAG | 结合多路召回或多种策略 |
+
+
+## 检索工具化
+
+实战里通常把检索器封装成工具，让 Agent 自主决定何时查知识库。
 
 
 **使用**
 
-```
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-loader = TextLoader('docs/readme.txt', encoding='utf-8')
-docs = loader.load()
-
-splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-chunks = splitter.split_documents(docs)
-```
-
-
-
-## 向量存储与检索
-
-使用 Embedding 模型把文本转为向量，并写入向量库。
-
-
-
-**使用**
-
-```
-from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
-
-embeddings = OpenAIEmbeddings()
-
-vector_store = Chroma(
-    collection_name='docs',
-    embedding_function=embeddings,
-)
-
-vector_store.add_documents(chunks)
-retriever = vector_store.as_retriever(search_kwargs={'k': 4})
-docs = retriever.invoke('LangChain Agent 是什么？')
-```
-
-
-
-# RAG Agent
-
-## 检索工具
-
-把检索器封装成工具，让 Agent 在需要时主动查知识库。
-
-
-
-**使用**
-
-```
+```python
 from langchain_core.tools import tool
 
 @tool
 def search_docs(query: str) -> str:
     """从知识库检索相关文档。"""
     docs = retriever.invoke(query)
-    return '\n\n'.join(doc.page_content for doc in docs)
+    return "\n\n".join(doc.page_content for doc in docs)
 ```
 
 
+# 前端模式
 
-# 项目案例
+## Frontend Overview
 
-## 智能客服
-
-智能客服通常由 FAQ/RAG、业务接口、人工介入组成。
-
+前端相关页面本质是在讲：如何把 Agent 的流式执行过程稳定映射到 UI。
 
 
-**典型链路**
+## 渲染消息与输出
 
-```
-用户问题 -> Agent -> FAQ/RAG 工具 -> 业务查询工具 -> 人工介入 -> 客服回复
-```
+重点模式：
 
-
-
-**关键点**
-
-- FAQ 用 RAG。
-- 订单、物流、售后走业务接口。
-- 退款、赔付、删除数据走人工确认。
+- Markdown 消息
+- 结构化输出渲染
+- 推理 token 展示
+- 生成式 UI
 
 
+## 展示 Agent 操作
 
-## 个人知识库
+重点模式：
 
-个人知识库适合整理本地文档、技术笔记、项目资料。
-
-
-
-**关键点**
-
-- 文档路径、标题、URL、页码写入 metadata。
-- 回答中展示引用来源。
-- 定期增量更新索引。
-- 私人知识库注意权限和数据安全。
+- 工具调用卡片
+- 人工干预审批卡片
+- 执行状态展示
 
 
+## 管理对话
 
-## 多工具个人助手
+重点模式：
 
-个人助手可以组合日程、天气、搜索、计算器、知识库、邮件等工具。
-
-
-
-**关键点**
-
-- 查询类工具可直接执行。
-- 修改、发送、删除类工具需要确认。
-- 用户偏好保存到 Store。
-- 多轮上下文使用 Checkpointer。
+- 分支聊天
+- 消息队列
+- 加入与重新加入流
+- 时间旅行
 
 
+# 常见前端模式
 
-**建议**
+## Markdown 消息
 
-- 文档切分大小会直接影响召回质量。
-- 召回结果要保留来源，便于校验。
-- 没有检索到依据时，应说明资料不足。
-- 表格、代码、长文档要单独设计切分策略。
+适合普通聊天输出，重点是：
+
+- 选择 Markdown 渲染库
+- 做 HTML 清理
+- 处理流式更新
 
 
+## 工具调用可视化
 
-# 参考链接
+适合把工具参数、结果、加载状态渲染成专门卡片，而不是塞进纯文本。
 
-## 教程来源
 
-- https://www.runoob.com/langchain/langchain-rag-overview.html
-- https://www.runoob.com/langchain/langchain-document-loaders.html
-- https://www.runoob.com/langchain/langchainrag-agent.html
-- https://www.runoob.com/langchain/langchain-project-customer-service.html
-- https://www.runoob.com/langchain/langchain-project-knowledge-qa.html
-- https://www.runoob.com/langchain/langchain-project-personal-assistant.html
+## 结构化输出渲染
+
+适合表单、表格、对象结果展示。前端应支持部分数据渐进式渲染。
+
+
+## 推理 Token
+
+适合把模型思考过程单独折叠展示，避免和最终答案混在一起。
+
+
+## 生成式 UI
+
+生成式 UI 页的重点是：让模型返回组件规范，再由前端注册表渲染组件。
+
+适合：
+
+- 卡片式结果
+- 可交互表单
+- 动态面板
+
+
+## 分支聊天
+
+适合编辑历史消息、重新生成回答、保留多条对话分支。
+
+
+## 消息队列
+
+适合用户连续提交多条请求时排队处理，避免请求互相覆盖。
+
+
+## 断线重连与时间旅行
+
+- `join / rejoin`：适合长任务断线重连
+- `time-travel`：适合基于检查点回看和恢复历史状态
+
+
+# 前端集成
+
+## 官方提到的集成
+
+- CopilotKit
+- AI Elements
+- assistant-ui
+- OpenUI
+
+
+## 选择思路
+
+| 集成 | 适合场景 |
+| :-- | :-- |
+| CopilotKit | 动态 UI 和组件交互较多 |
+| AI Elements | 快速搭标准聊天界面 |
+| assistant-ui | 自定义聊天 UI |
+| OpenUI | 模型驱动组件生成 |
+
+
+# 项目实战
+
+## Agent Chat UI
+
+`ui` 页面本质是一个现成聊天界面方案，适合快速把 Agent 接上前端。
+
+
+## 项目落地建议
+
+- FAQ / 知识问答优先用两步 RAG
+- 复杂任务再升级成 Agent 式 RAG
+- 工具调用、人工审批、推理过程尽量可视化
+- 长任务一定考虑消息队列、断线重连和检查点恢复
