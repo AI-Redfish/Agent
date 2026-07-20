@@ -360,20 +360,11 @@ else:
 
 # 工具注册
 
-工具需要注册到 Agent，模型才知道可以调用它。
+## llm绑定工具
 
-```python
-agent = create_agent(
-    model=model,
-    tools=[add],
-    system_prompt="你可以根据需要调用工具。"
-)
-```
+## agent注册工具
 
 一个 Agent 可以注册多个工具，模型会根据问题自动判断调用哪个工具。
-
-
-**使用**
 
 ```python
 from dotenv import load_dotenv
@@ -383,6 +374,7 @@ from langchain.tools import tool
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage
+import os
 
 
 @tool
@@ -418,7 +410,28 @@ def get_course_detail(course_name: str) -> str:
 
 
 # 创建 Agent
-model = init_chat_model("deepseek:deepseek-v4-flash", temperature=0)
+# 加载 .env
+load_dotenv()
+
+# 从环境变量获取配置
+api_key = os.getenv("API_KEY")
+model_name = os.getenv("MODEL")  
+base_url = os.getenv("BASE_URL")  
+model_provider = os.getenv("MODEL_PROVIDER")  
+
+headers = {
+    "User-Agent": "Codex (OpenAI-Codex; +https://openai.com/codex) Python/3.12",
+    "X-Client-Type": "codex"     
+}
+
+model = init_chat_model(
+    model=model_name,
+    model_provider=model_provider,
+    api_key=api_key,
+    base_url=base_url,
+    default_headers=headers
+)
+
 agent = create_agent(
     model=model,
     tools=[search_courses, get_course_detail],
@@ -439,6 +452,194 @@ ask("Python3 基础教程学完需要多久？")
 ```
 
 
+
+
+
+
+
+
+
+# 工具调用
+
+## 工具直接调用
+
+工具本身也可以直接调用，常用于本地测试。
+
+
+**使用**
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def hello_tool(name: str) -> str:
+    """向指定的人打招呼。
+
+    Args:
+        name: 要打招呼的人的名字
+    """
+    return f"你好，{name}！"
+
+
+result = hello_tool.invoke({"name": "小明"})
+
+print(result)
+print(hello_tool.name)
+print(hello_tool.description)
+
+输出：
+你好，小明！
+hello_tool
+向指定的人打招呼。
+```
+
+
+
+## 通过Agent调用
+
+```python
+from dotenv import load_dotenv
+load_dotenv()
+
+from langchain.tools import tool
+from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
+from langchain.messages import HumanMessage
+import os
+
+
+@tool
+def search_courses(keyword: str) -> str:
+    """在菜鸟教程 RUNOOB 中搜索课程。传入关键词返回相关课程列表。
+
+    Args:
+        keyword: 搜索关键词，如 python、html、java
+    """
+    courses = {
+        "python": "Python3 基础教程、Python 数据分析、Python 爬虫入门",
+        "html": "HTML 基础教程、HTML5 新特性、HTML 表单实战",
+        "java": "Java 基础教程、Java 面向对象、Java Spring 框架",
+    }
+    return courses.get(keyword.lower(), f"未找到与 {keyword} 相关的课程")
+
+
+@tool
+def get_course_detail(course_name: str) -> str:
+    """获取指定课程的详细信息，包括章节数和学习时长。
+
+    Args:
+        course_name: 课程名称，如 "Python3 基础教程"
+    """
+    details = {
+        "python3 基础教程": "共 30 章，预计学习时长 20 小时，适合零基础入门",
+        "html 基础教程": "共 25 章，预计学习时长 15 小时，适合零基础入门",
+    }
+    return details.get(
+        course_name.lower(),
+        f"{course_name} 详情：适合初学者，内容丰富，附带实战案例"
+    )
+
+
+# 创建 Agent
+# 加载 .env
+load_dotenv()
+
+# 从环境变量获取配置
+api_key = os.getenv("API_KEY")
+model_name = os.getenv("MODEL")  
+base_url = os.getenv("BASE_URL")  
+model_provider = os.getenv("MODEL_PROVIDER")  
+
+headers = {
+    "User-Agent": "Codex (OpenAI-Codex; +https://openai.com/codex) Python/3.12",
+    "X-Client-Type": "codex"     
+}
+
+model = init_chat_model(
+    model=model_name,
+    model_provider=model_provider,
+    api_key=api_key,
+    base_url=base_url,
+    default_headers=headers
+)
+
+agent = create_agent(
+    model=model,
+    tools=[search_courses, get_course_detail],
+    system_prompt="你是菜鸟教程 RUNOOB 的学习顾问，帮助用户找到合适的课程。",
+)
+
+
+# 运行 Agent - 增强版，展示工具调用链路
+def ask(question: str):
+    print(f"\n{'='*60}")
+    print(f"👤 用户: {question}")
+    print(f"{'='*60}")
+    
+    result = agent.invoke({"messages": [HumanMessage(content=question)]})
+    
+    # 1. 先展示最终回答
+    print(f"\n🤖 顾问: {result['messages'][-1].content}")
+    
+    # 2. 展示工具调用链路（学习重点）
+    print(f"\n{'─'*40}")
+    print("🔧 工具调用链路:")
+    print(f"{'─'*40}")
+    
+    # 遍历消息列表，找出工具调用相关的消息
+    tool_calls_found = False
+    for idx, msg in enumerate(result["messages"]):
+        # 显示工具调用请求（AI 决定调用哪个工具）
+        if hasattr(msg, 'tool_calls') and msg.tool_calls:
+            print(f"\n📤 步骤 {idx}: AI 决定调用工具")
+            for tool_call in msg.tool_calls:
+                print(f"   → 工具名称: {tool_call['name']}")
+                print(f"   → 传入参数: {tool_call['args']}")
+        
+        # 显示工具执行结果（重点：查看工具消息）
+        if msg.type == "tool":
+            tool_calls_found = True
+            print(f"\n📥 工具执行结果:")
+            print(f"   → 工具名称: {msg.name}")
+            print(f"   → 返回内容: {msg.content[:100]}{'...' if len(msg.content) > 100 else ''}")
+    
+    if not tool_calls_found:
+        print("\nℹ️ 本次问答未调用工具")
+    
+    print(f"\n{'='*60}\n")
+
+
+# 测试不同的问答场景
+print("\n" + "🚀 开始测试 Agent 工具调用链路".center(60, "="))
+
+# 场景1：需要搜索课程（会调用 search_courses）
+ask("我想学 Python，有什么课程推荐？")
+
+# 场景2：需要查询课程详情（会调用 get_course_detail）
+ask("Python3 基础教程学完需要多久？")
+
+# 场景3：需要多次调用工具（先搜索，再查详情）
+ask("HTML 有哪些课程？HTML 基础教程怎么样？")
+
+# 场景4：不需要调用工具的直接回答
+ask("你好，请问你是谁？")
+```
+
+
+
+
+# 错误处理
+
+工具页和运行时页都强调外部调用要包好异常、超时和权限。
+
+
+**使用**
+
+```python
+from langchain_core.tools import ToolException
+
+raise ToolException("没有找到订单")
+```
 
 
 
@@ -590,153 +791,6 @@ print(f"handle_tool_errors=True: {result}")
 
 
 
-# 工具调用
-
-## 工具直接调用
-
-工具本身也可以直接调用，常用于本地测试。
-
-
-**使用**
-
-```python
-from langchain_core.tools import tool
-
-@tool
-def hello_tool(name: str) -> str:
-    """向指定的人打招呼。
-
-    Args:
-        name: 要打招呼的人的名字
-    """
-    return f"你好，{name}！"
-
-
-result = hello_tool.invoke({"name": "小明"})
-
-print(result)
-print(hello_tool.name)
-print(hello_tool.description)
-```
-
-
-**输出**
-
-```text
-你好，小明！
-hello_tool
-向指定的人打招呼。
-```
-
-
-**说明**
-
-- 函数名会成为工具名。
-- docstring 会成为工具描述。
-- Agent 依赖工具描述判断什么时候调用工具。
-- 参数说明越清楚，Agent 越不容易传错参数。
-
-
-
-
-
-
-## 工具调用链路
-
-Agent 调用工具时，消息列表中会出现工具调用结果。
-
-
-**查看工具消息**
-
-```python
-for msg in result["messages"]:
-    if msg.type == "tool":
-        print(msg.name, msg.content)
-```
-
-
-## 工具返回值
-
-工具返回值应尽量短、稳、可解析。
-
-不建议：
-
-- 返回过长噪声文本
-- 返回格式不稳定的自由文本
-- 把系统异常直接抛给模型
-
-
-## 错误处理
-
-工具页和运行时页都强调外部调用要包好异常、超时和权限。
-
-
-**使用**
-
-```python
-from langchain_core.tools import ToolException
-
-raise ToolException("没有找到订单")
-```
-
-
-## 工具定义方式对比
-
-| 方式 | 代码量 | 适用场景 |
-| :-- | :-- | :-- |
-| `@tool` | 少 | 简单到中等复杂度工具 |
-| `@tool(args_schema=...)` | 中 | 需要精细参数校验 |
-| Pydantic 类作为工具 | 多 | 复杂业务逻辑、带状态工具 |
-| 字典格式 | 少 | 远程工具、MCP 工具、服务端工具 |
-
-
-# 工具高级能力
-
-## 访问上下文
-
-工具不仅能收显式参数，也能读取运行时注入内容。
-
-
-## 状态注入
-
-**使用**
-
-```python
-from typing import Annotated
-from langgraph.prebuilt import InjectedState
-
-@tool
-def read_context(state: Annotated[dict, InjectedState]) -> str:
-    """读取当前 Agent 状态。"""
-    return str(state.get("messages", [])[-1])
-```
-
-
-## 存储注入
-
-**使用**
-
-```python
-from typing import Annotated
-from langgraph.store.base import BaseStore
-from langgraph.prebuilt import InjectedStore
-
-@tool
-def get_preference(store: Annotated[BaseStore, InjectedStore], key: str) -> str:
-    """读取用户偏好。"""
-    item = store.get(("preferences",), key)
-    return item.value if item else "未设置"
-```
-
-
-## 其他可注入信息
-
-工具页与运行时页提到，工具里还可以访问：
-
-- runtime context
-- execution info
-- server info
-- writer / 流写入器
 
 
 # 运行时
