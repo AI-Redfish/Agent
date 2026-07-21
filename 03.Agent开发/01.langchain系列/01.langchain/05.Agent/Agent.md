@@ -8,8 +8,11 @@ Agent 可以理解成由模型驱动的执行循环。
 用户输入 -> 模型判断 -> 工具调用 -> 工具结果写回 -> 继续推理 -> 最终回复
 ```
 
-
 # create_agent()
+
+`create_agent()` 返回的是 `CompiledStateGraph` 对象。
+
+它本质上是 LangGraph 编译后的图，提供同步运行、异步运行、流式运行、状态读取和状态更新等能力。
 
 ```
 from langchain.agents import create_agent
@@ -123,24 +126,6 @@ agent = create_agent(
 
 # Agent 调用
 
-## 返回值
-
-`create_agent()` 返回的是 `CompiledStateGraph` 对象。
-
-它本质上是 LangGraph 编译后的图，提供同步运行、异步运行、流式运行、状态读取和状态更新等能力。
-
-
-**常用方法**
-
-| 方法 | 说明 | 适用场景 |
-| :-- | :-- | :-- |
-| `invoke(input, config)` | 同步运行，等待完整结果 | 脚本、简单接口 |
-| `ainvoke(input, config)` | 异步运行，等待完整结果 | Web 服务 |
-| `stream(input, config, stream_mode)` | 同步流式运行 | 实时展示中间步骤 |
-| `astream(input, config, stream_mode)` | 异步流式运行 | WebSocket、SSE |
-| `get_state(config)` | 获取当前状态 | 查看、恢复对话状态 |
-| `update_state(config, values)` | 更新状态 | 手动修改对话状态 |
-
 
 
 ## invoke()
@@ -188,8 +173,21 @@ print(result["messages"][-1].content)
 
 可以一边执行一边把消息、步骤或自定义事件流出来，适合调试和前端展示。
 
+stream() 支持多种 stream_mode，每种提供不同粒度的信息。
 
-**查看完整状态变化**
+| 模式     | 返回内容                 | 适用场景                                     |
+| :------- | :----------------------- | :------------------------------------------- |
+| updates  | 每个节点执行后的状态更新 | 追踪 Agent 执行步骤，显示中间结果            |
+| values   | 每个节点执行后的完整状态 | 需要在每一步看到完整消息历史                 |
+| messages | 逐 Token 的消息流        | 前端流式展示 AI 打字效果                     |
+| custom   | 自定义事件               | Middleware 通过 stream_writer 发送自定义事件 |
+
+
+
+**values**
+
+
+查看完整状态变化。
 
 ```python
 for step in agent.stream(
@@ -198,6 +196,7 @@ for step in agent.stream(
 ):
     print(step["messages"][-1].content)
 ```
+
 
 
 **查看节点更新**
@@ -222,6 +221,11 @@ for token, metadata in agent.stream(
 ```
 
 
+
+
+
+
+
 ## astream()
 
 `astream()` 是异步版本的 `stream()`。
@@ -238,6 +242,9 @@ async for token, metadata in agent.astream(
 ):
     print(token.content, end="")
 ```
+
+
+
 
 
 ## get_state()
@@ -267,7 +274,6 @@ print(state.values["messages"][-1].content)
 `update_state()` 用来手动修改指定会话线程的状态。
 
 适合人工修正、恢复对话、插入外部状态。
-
 
 **使用**
 
