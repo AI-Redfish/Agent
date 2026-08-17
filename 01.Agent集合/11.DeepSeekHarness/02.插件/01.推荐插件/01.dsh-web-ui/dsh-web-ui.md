@@ -1,56 +1,14 @@
-# 安装
+# 官方地址
 
-```
-# 1. 克隆仓库
-git clone https://github.com/zhu1090093659/dsh-web-ui.git
-cd dsh-web-ui
-
-# 2. 安装依赖并构建
-pnpm install
-pnpm -r build
-
-# 3. 把全家桶链接进 web profile（推荐，先链接全部子包再注册聚合包）
-node scripts/link-profile.mjs
-# 进入dsh源码安装目录
-cd XXX/deepseek-harness
-pnpm dsh plugin --profile web add link:dsh-web-ui源码所在目录/packages/dsh-web-ui-all
-
-
-# 4. 重启 dsh web，侧边栏即可看到全部插件入口
-pnpm dsh web
-```
-
-单独安装某个插件
-
-```
-dsh plugin --profile web add @linxin666/dsh-liangshen              # 梁神模式
-dsh plugin --profile web add @linxin666/dsh-client-ui-task-board   # 任务看板
-dsh plugin --profile web add @linxin666/dsh-ssh                    # 远程连接（SSH）
-dsh plugin --profile web add @linxin666/dsh-tool-describe-image    # 图像理解工具
-dsh plugin --profile web add @linxin666/dsh-pet                    # 鲸鱼娘宠物
-```
-
-
-
-**重启 dsh web**
-
-侧边栏出现全部插件入口
-
-
-
-# 卸载
-
-```
-# 卸载
-pnpm pnpm dsh plugin --profile web remove @linxin666/dsh-web-ui-all
-
-# 重启
-pnpm dsh web
-```
-
-
+https://github.com/zhu1090093659/dsh-web-ui
 
 # 梁神模式
+
+```
+pnpm dsh plugin --profile web add @linxin666/dsh-liangshen
+```
+
+
 
 通过“两阶段启动”策略，解决了 DeepSeek V4 Pro 模型在任务初期因工具集过大而产生的性能不稳定问题。
 
@@ -60,15 +18,51 @@ pnpm dsh web
 
 
 
-# 任务看板
+# Git图谱
 
-**创建任务**
-
-设置权限会失败，只能用默认。
-
-
+```
+pnpm dsh plugin --profile web add @linxin666/dsh-client-ui-git-graph
+```
 
 
+
+# 右侧面板
+
+**安装**
+
+```
+pnpm dsh plugin --profile web add @linxin666/dsh-client-ui-aionui-panel
+```
+
+
+
+
+
+# 鲸鱼娘宠物
+
+```
+pnpm dsh plugin --profile web add @linxin666/dsh-pet
+```
+
+
+
+
+
+# SSH
+
+```
+pnpm dsh plugin --profile web add @linxin666/dsh-ssh
+```
+
+
+
+**功能列表**
+
+- **Web 终端**：xterm.js 远程终端，实时输出，窗口大小自适应；
+- **文件传输**：SFTP 上传 / 下载，有进度条，能浏览远程目录；
+- **端口转发**：本地隧道直连远程内网服务（数据库、API、管理后台），只监听 127.0.0.1；
+- **集群执行**：一条命令并发跑多台主机，按别名 / 环境 / 标签过滤；
+- **Agent 直连**：Agent 和面板共用同一份主机配置，对话里说一句「连一下 xxx 看看状态」，智能体就去执行远程命令。
 
 
 
