@@ -1,3 +1,36 @@
+# START 与 END
+
+
+
+`START` 和 `END` 是 LangGraph 的虚拟节点：
+
+- `START` 表示图入口。
+- `END` 表示图结束。
+
+示例：
+
+```python
+builder.add_edge(START, "first_node")
+builder.add_edge("last_node", END)
+```
+
+**路由到 END**
+
+条件边中可以返回 `END` 来结束执行：
+
+```python
+def should_continue(state):
+    if state["done"]:
+        return END
+    return "next_node"
+```
+
+这在循环 Agent 中非常常见。
+
+
+
+
+
 # add_node
 
 ## **普通添加**
@@ -107,6 +140,23 @@ print(state["combined_output"])
 
 
 # add_conditional_edges
+
+## 案例
+
+**方式1**
+
+```
+def route_by_intent(state):
+    if state["intent"] == "search":
+        return "search_node"
+    if state["intent"] == "tool":
+        return "tool_node"
+    return "chat_node"
+
+builder.add_conditional_edges("classify_intent", route_by_intent)
+```
+
+**方式2**
 
 ```
 # Fail,Pass为上一个节点的返回值。
@@ -224,6 +274,56 @@ display(Image(router_workflow.get_graph().draw_mermaid_png()))
 state = router_workflow.invoke({"input": "Write me a joke about cats"})
 print(state["output"])
 ```
+
+
+
+## 路由函数不要做副作用
+
+路由函数最好只做判断，不要调用外部 API、写数据库或修改 state。副作用应该放在节点里。
+
+# Command
+
+## 基本作用
+
+`Command` 允许一个节点同时完成两件事：
+
+1. 更新 state。
+2. 指定下一步跳转到哪个节点。
+
+适合把“节点逻辑”和“路由决策”放在同一个函数中。
+
+示意：
+
+```python
+from langgraph.types import Command
+
+
+def classify(state) -> Command:
+    if "退款" in state["question"]:
+        return Command(
+            update={"intent": "refund"},
+            goto="refund_node",
+        )
+    return Command(
+        update={"intent": "general"},
+        goto="general_node",
+    )
+```
+
+## 使用建议
+
+适合使用 `Command` 的场景：
+
+- 节点内部已经得出下一步，不想再写独立路由函数。
+- 需要同时更新状态并跳转。
+- 子图需要跳转回父图。
+- interrupt 恢复后需要继续控制流程。
+
+不建议滥用：
+
+- 简单固定流程用普通边即可。
+- 简单分支用条件边更清晰。
+- 如果所有节点都用 `Command`，图结构会变得不直观。
 
 
 
