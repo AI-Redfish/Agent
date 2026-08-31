@@ -369,7 +369,66 @@ print(result)
 
 # Multi Schema用法
 
-### 3.4.1. 状态类型
+## 案例
+
+下面通过一个简单案例说明四类状态的定义和使用。
+
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+class InputState(TypedDict):
+    username: str
+
+class OutputState(TypedDict):
+    graph_output: str
+
+class OverAllState(TypedDict):
+    nickname: str
+    username: str
+    graph_output: str
+
+class PrivateState(TypedDict):
+    greeting: str
+
+def node_1(state: InputState) -> OverAllState:
+    # 向全局状态写入数据
+    return {
+        "nickname": "Dear " + state["username"]
+    }
+
+def node_2(state: OverAllState) -> PrivateState:
+    # 从全局状态读取数据，写入私有状态
+    return {
+        "greeting": state["nickname"] + ", 早上好~"
+    }
+
+def node_3(state: PrivateState) -> OutputState:
+    # 从私有状态读取数据，写入输出状态
+    return {
+        "graph_output": state["greeting"] + " 很高兴认识你！"
+    }
+
+builder = StateGraph(OverAllState,input_schema=InputState,output_schema=OutputState)
+builder.add_node("node_1", node_1)
+builder.add_node("node_2", node_2)
+builder.add_node("node_3", node_3)
+builder.add_edge(START, "node_1")
+builder.add_edge("node_1", "node_2")
+builder.add_edge("node_2", "node_3")
+builder.add_edge("node_3", END)
+
+graph = builder.compile()
+print(graph.invoke({"username":"小黄"}))
+```
+
+输出如下
+
+```json
+{ "graph_output": "Dear 小黄, 早上好~ 很高兴认识你！" }
+```
+
+## 状态类型
 
 `LangGraph` 支持在一个图中使用多个状态 Schema，用于区分图的外部输入、外部输出、内部共享状态以及节点间的临时状态。
 
@@ -571,65 +630,6 @@ print(result)
    ```
 
    那么最终 `graph.invoke()` 的返回结果就只会包含 `graph_output`。
-
-### 3.4.3. 案例
-
-下面通过一个简单案例说明四类状态的定义和使用。
-
-```python
-from typing import TypedDict
-from langgraph.graph import StateGraph, START, END
-
-class InputState(TypedDict):
-    username: str
-
-class OutputState(TypedDict):
-    graph_output: str
-
-class OverAllState(TypedDict):
-    nickname: str
-    username: str
-    graph_output: str
-
-class PrivateState(TypedDict):
-    greeting: str
-
-def node_1(state: InputState) -> OverAllState:
-    # 向全局状态写入数据
-    return {
-        "nickname": "Dear " + state["username"]
-    }
-
-def node_2(state: OverAllState) -> PrivateState:
-    # 从全局状态读取数据，写入私有状态
-    return {
-        "greeting": state["nickname"] + ", 早上好~"
-    }
-
-def node_3(state: PrivateState) -> OutputState:
-    # 从私有状态读取数据，写入输出状态
-    return {
-        "graph_output": state["greeting"] + " 很高兴认识你！"
-    }
-
-builder = StateGraph(OverAllState,input_schema=InputState,output_schema=OutputState)
-builder.add_node("node_1", node_1)
-builder.add_node("node_2", node_2)
-builder.add_node("node_3", node_3)
-builder.add_edge(START, "node_1")
-builder.add_edge("node_1", "node_2")
-builder.add_edge("node_2", "node_3")
-builder.add_edge("node_3", END)
-
-graph = builder.compile()
-print(graph.invoke({"username":"小黄"}))
-```
-
-输出如下
-
-```json
-{ "graph_output": "Dear 小黄, 早上好~ 很高兴认识你！" }
-```
 
 ### 3.4.4. 案例执行过程分析
 
