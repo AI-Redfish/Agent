@@ -480,11 +480,96 @@ Markdown(state["final_report"])
 
 
 
+# draw_mermaid
+
+获取对应的mermaid图表示。
+
+```
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+
+class State(TypedDict):
+    topic: str
+    joke: str
+
+
+def generate_joke(state: State):
+    return {"joke": f"这是一个关于 {state['topic']} 的笑话。"}
+
+
+builder = StateGraph(State)
+builder.add_node("generate_joke", generate_joke)
+builder.add_edge(START, "generate_joke")
+builder.add_edge("generate_joke", END)
+
+graph = builder.compile()
+result = graph.invoke({"topic": "LangGraph"})
+
+print(result)
+
+# 获取图的mermaid图表示
+raw_mermaid = graph.get_graph().draw_mermaid()
+print(raw_mermaid)
+```
 
 
 
 
 
+# draw_mermaid_png
+
+Langgraph也支持将mermaid转换为图片字节流
+
+```python
+png_bytes = graph.get_graph().draw_mermaid_png()
+```
+
+`draw_mermaid_png()`底层会先调用`draw_mermaid()`得到mermaid语法的图表代码，然后调用在线服务渲染为mermaid图片。
+
+默认的mermaid在线渲染服务链接为：https://mermaid.ink，由于网络问题可能存在渲染失败的情况，通常重试即可成功。
+
+可以通过`draw_mermaid_png()`的`base_url`参数替换可用的mermaid在线渲染服务。
+
+
+
+**输出图片**
+
+```
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+
+class State(TypedDict):
+    topic: str
+    joke: str
+
+
+def generate_joke(state: State):
+    return {"joke": f"这是一个关于 {state['topic']} 的笑话。"}
+
+
+builder = StateGraph(State)
+builder.add_node("generate_joke", generate_joke)
+builder.add_edge(START, "generate_joke")
+builder.add_edge("generate_joke", END)
+
+graph = builder.compile()
+result = graph.invoke({"topic": "LangGraph"})
+
+print(result)
+
+# 获取图的mermaid图表示
+raw_mermaid = graph.get_graph().draw_mermaid()
+print(raw_mermaid)
+
+# 假设你已经有了 png_bytes
+png_bytes = graph.get_graph().draw_mermaid_png()
+
+# 写入文件（二进制模式）
+with open("my_graph.png", "wb") as f:
+    f.write(png_bytes)
+```
 
 
 
