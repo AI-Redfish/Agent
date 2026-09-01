@@ -137,7 +137,58 @@ print(state["combined_output"])
 
 
 
+#  add_edge
 
+```python
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+class OverAllState(TypedDict):
+    username: str
+    greeting: str
+    output: str
+
+def node_a(state: OverAllState) -> OverAllState:
+    return {
+        "greeting": "Dear " + state["username"]
+    }
+
+def node_b(state: OverAllState) -> OverAllState:
+    return {
+        "output": state["greeting"] + "，你好！"
+    }
+
+builder = StateGraph(state_schema=OverAllState)
+builder.add_node("node_a", node_a)
+builder.add_node("node_b", node_b)
+builder.add_edge(START, "node_a")
+builder.add_edge("node_a", "node_b")
+builder.add_edge("node_b", END)
+
+graph = builder.compile()
+res = graph.invoke({"username": "小黄"})
+print(res)
+
+from IPython.display import display
+
+display(graph)
+```
+
+
+
+# add_sequence
+
+```
+builder.add_sequence([node_a, node_b])
+```
+
+大致等价于：
+
+```
+builder.add_node("node_a", node_a)
+builder.add_node("node_b", node_b)
+builder.add_edge("node_a", "node_b")
+```
 
 # add_conditional_edges
 
@@ -324,6 +375,62 @@ def classify(state) -> Command:
 - 简单固定流程用普通边即可。
 - 简单分支用条件边更清晰。
 - 如果所有节点都用 `Command`，图结构会变得不直观。
+
+
+
+## 完整案例
+
+```
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Command
+from typing import TypedDict
+
+# 1. 定义状态
+class State(TypedDict):
+    value: str
+
+# 2. 定义节点
+def node_a(state: State):
+    # 节点 A 返回 Command，直接跳转到 node_c，并更新状态
+    return Command(
+        update={"value": "从A跳过来"},
+        goto="node_c"  # 跳到 node_c
+    )
+
+def node_b(state: State):
+    # 节点 B 返回 Command，直接跳转到 END
+    return Command(
+        update={"value": "从B跳过来"},
+        goto=END  # 跳到结束
+    )
+
+def node_c(state: State):
+    print(f"node_c 收到: {state['value']}")
+    return {"value": state['value'] + "，处理完毕"}
+
+# 3. 构建图
+builder = StateGraph(State)
+
+# 添加所有节点
+builder.add_node("node_a", node_a)
+builder.add_node("node_b", node_b)
+builder.add_node("node_c", node_c)
+
+# 设置入口
+builder.add_edge(START, "node_a")
+
+# 关键：从 node_a 走完直接结束（但实际上 node_a 自己用 Command 跳转了）
+# 这里只是为了让图有边连接
+builder.add_edge("node_a", END)      # 这条边会被 Command 覆盖
+builder.add_edge("node_c", END)      # node_c 结束后结束
+
+# 编译
+graph = builder.compile()
+
+# 4. 运行
+result = graph.invoke({"value": "初始值"})
+print(f"最终状态: {result}")
+```
 
 
 
