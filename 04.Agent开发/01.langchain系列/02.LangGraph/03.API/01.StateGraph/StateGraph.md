@@ -55,84 +55,92 @@ workflow.add_node(
 
 
 
-## 并行与聚合
+# 并行与聚合
 
-**使用场景**
+## defer node execution
 
-- 运行一个处理文档关键词的子任务，以及另一个检查格式错误的子任务
-- 多次运行一个基于不同标准（如引用数量、使用的来源数量和来源质量）对文档准确性进行评分的任务
+```python
+builder.add_node("audit_node", audit_node, defer=True)
+```
+
+**`defer=True`** 的含义是：
+
+只要图中还有其他常规节点（Pending Tasks）在排队或执行，它就会一直待在等待区。
 
 
 
-**案例**
+**案例1**
 
 ```
-# Graph state
-class State(TypedDict):
-    topic: str
-    joke: str
-    story: str
-    poem: str
-    combined_output: str
+builder = StateGraph(AuditState)
+builder.add_node("researcher", researcher)
+builder.add_node("writer", writer)
+builder.add_node("auditor", auditor, defer=True)  # 核心：延迟执行
+
+builder.add_edge(START, "researcher")
+builder.add_edge(START, "writer")
+builder.add_edge(START, "auditor")  # 虽然从 START 触发，但会等待
+
+builder.add_edge("researcher", END)
+builder.add_edge("writer", END)
+builder.add_edge("auditor", END)
+
+graph = builder.compile()
+
+执行顺序：
+researcher 和 writer 并行执行，两者完成并走向 END。
+auditor 被唤醒执行，auditor 走向 END。
+```
 
 
-# Nodes
-def call_llm_1(state: State):
-    """First LLM call to generate initial joke"""
 
-    msg = llm.invoke(f"Write a joke about {state['topic']}")
-    return {"joke": msg.content}
+**案例2**
 
+```
+START -> a -> b -> c->end（这是一条很长的串行链路）
+分支 2：START -> d-end（d 带有 defer=True）
 
-def call_llm_2(state: State):
-    """Second LLM call to generate story"""
-
-    msg = llm.invoke(f"Write a story about {state['topic']}")
-    return {"story": msg.content}
+执行顺序：
+a,b,,c,d
+原因：d要等待没有其他可执行节点才会被触发。
+```
 
 
-def call_llm_3(state: State):
-    """Third LLM call to generate poem"""
 
-    msg = llm.invoke(f"Write a poem about {state['topic']}")
-    return {"poem": msg.content}
+**案例3**
+
+```
+builder = StateGraph(MyState)
+builder.add_node("node_a", node_a)
+builder.add_node("node_b", node_b)
+builder.add_node("node_c", node_c)
+builder.add_node("aggregator", aggregator, defer=False)  # 👈 默认值
+
+builder.add_edge(START, "node_a")
+builder.add_edge(START, "node_b")
+builder.add_edge(START, "node_c")
+builder.add_edge("node_a", "aggregator")
+builder.add_edge("node_b", "aggregator")
+builder.add_edge("node_c", "aggregator")
+builder.add_edge("aggregator", "final_node")
+
+这个案例中，defer设置为true,false没有区别，都是，都要等待a,b,c都执行完才会被触发aggregator
+```
 
 
-def aggregator(state: State):
-    """Combine the joke, story and poem into a single output"""
 
-    combined = f"Here's a story, joke, and poem about {state['topic']}!\n\n"
-    combined += f"STORY:\n{state['story']}\n\n"
-    combined += f"JOKE:\n{state['joke']}\n\n"
-    combined += f"POEM:\n{state['poem']}"
-    return {"combined_output": combined}
+**案例4**
 
+```
+START ──┬──> node_a ──┐
+        ├──> node_b ──┼──> aggregator ──> final_node ──> END
+        ├──> node_c ──┘
+        └──> node_d ──> END (独立分支)
+        
 
-# Build workflow
-parallel_builder = StateGraph(State)
+aggregator的defer=False：只要 node_a, node_b, node_c 跑完，aggregator 就会立刻执行。它根本不在乎 node_d 有没有跑完。
 
-# Add nodes
-parallel_builder.add_node("call_llm_1", call_llm_1)
-parallel_builder.add_node("call_llm_2", call_llm_2)
-parallel_builder.add_node("call_llm_3", call_llm_3)
-parallel_builder.add_node("aggregator", aggregator)
-
-# Add edges to connect nodes
-parallel_builder.add_edge(START, "call_llm_1")
-parallel_builder.add_edge(START, "call_llm_2")
-parallel_builder.add_edge(START, "call_llm_3")
-parallel_builder.add_edge("call_llm_1", "aggregator")
-parallel_builder.add_edge("call_llm_2", "aggregator")
-parallel_builder.add_edge("call_llm_3", "aggregator")
-parallel_builder.add_edge("aggregator", END)
-parallel_workflow = parallel_builder.compile()
-
-# Show workflow
-display(Image(parallel_workflow.get_graph().draw_mermaid_png()))
-
-# Invoke
-state = parallel_workflow.invoke({"topic": "cats"})
-print(state["combined_output"])
+aggregator的defer=True：即使 node_a, node_b, node_c 都跑完了，调度器发现 node_d 还在运行（或者还没被触发），aggregator 就会继续等待，直到 node_d 也彻底执行完毕，它才会被唤醒。
 ```
 
 
@@ -192,9 +200,59 @@ builder.add_edge("node_a", "node_b")
 
 # add_conditional_edges
 
-## 案例
+## 语法
 
-**方式1**
+```python
+def add_conditional_edges(
+    self,
+    source: str,
+    path: Callable[..., Hashable | Sequence[Hashable]]
+    | Callable[..., Awaitable[Hashable | Sequence[Hashable]]]
+    | Runnable[Any, Hashable | Sequence[Hashable]],
+    path_map: dict[Hashable, str] | list[str] | None = None,
+) -> Self:
+```
+
+不考虑 **`self`**，核心参数有三个：
+
+- **`source`**：条件分支的起始节点；
+- **`path`**：路由规则，是一个可执行对象，通常是函数
+- **`path_map`**：路由规则的返回值到真实节点名之间的映射关系。
+
+其中，**`path`** 的返回值表示跳转的目标节点，可以是：
+
+- 字符串或特殊对象 **`END`** 表示的单个目标；
+- 字符串或特殊对象 **`END`** 表示的多个目标组成的序列，即路由到多个节点。
+
+**`path_map`** 
+
+- 可以省略，即取默认值 **`None`**，此时 **`path`** 返回值中出现的字符串必须是合法的节点名称。
+
+- 可以是字典，维护 **`path`** 返回值和真实节点的映射。
+
+- 也可以是列表，如下
+
+  ```python
+  path_map=["node_a", "node_b", "node_c"]
+  ```
+
+  相当于
+
+  ```python
+  path_map={
+      "node_a": "node_a",
+      "node_b": "node_b",
+      "node_c": "node_c",
+  }
+  ```
+
+  
+
+
+
+
+
+## **无pathMap**
 
 ```
 def route_by_intent(state):
@@ -207,7 +265,7 @@ def route_by_intent(state):
 builder.add_conditional_edges("classify_intent", route_by_intent)
 ```
 
-**方式2**
+## 有pathMap
 
 ```
 # Fail,Pass为上一个节点的返回值。
@@ -324,6 +382,26 @@ display(Image(router_workflow.get_graph().draw_mermaid_png()))
 # Invoke
 state = router_workflow.invoke({"input": "Write me a joke about cats"})
 print(state["output"])
+```
+
+
+
+## 路由到多个节点
+
+```
+def router(state: OverAllState) -> Sequence[Literal["node_a", "node_b", "node_c"]]:
+    if "诗" in state["content_type"]:
+        return ["node_a", "node_c"]
+    return ["node_b", "node_c"]
+
+builder = StateGraph(state_schema=OverAllState)
+builder.add_node("node_a", node_a)
+builder.add_node("node_b", node_b)
+builder.add_node("node_c", node_c)
+builder.add_conditional_edges(
+    START,
+    router
+)
 ```
 
 
