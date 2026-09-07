@@ -57,6 +57,225 @@ workflow.add_node(
 
 # 并行与聚合
 
+## “**与**”触发
+
+**等待所有上游分支到达**
+
+这是多分支汇聚中**最常见**的情况。
+
+**`LangGraph`** 的计算图是在一系列超步中完成的，如果能看到每个节点实例运行时的超步编号，则节点执行顺序一目了然。
+
+**`LangGraph`** 的节点可以通过名为 **`config`** 的有名参数获取运行时配置
+
+**`config`** 的元数据中记录了当前节点所在的 **`SuperStep`** 序号，可以通过下面的方式获取：
+
+```python
+config["metadata"]["langgraph_step"]
+```
+
+**详见下文。**
+
+**示例如下**
+
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langchain_core.runnables import RunnableConfig
+
+from loguru import logger
+
+class EmptyState(TypedDict):
+    pass
+
+def node_a(state: EmptyState, config: RunnableConfig) -> EmptyState:
+    cur_step = config["metadata"]["langgraph_step"]
+    logger.info("cur_step: {}, node_a 被触发", cur_step)
+    return {}
+
+def node_b(state: EmptyState, config: RunnableConfig) -> EmptyState:
+    cur_step = config["metadata"]["langgraph_step"]
+    logger.info("cur_step: {}, node_b 被触发", cur_step)
+    return {}
+
+def node_c(state: EmptyState, config: RunnableConfig) -> EmptyState:
+    cur_step = config["metadata"]["langgraph_step"]
+    logger.info("cur_step: {}, node_c 被触发", cur_step)
+    return {}
+
+def node_d(state: EmptyState, config: RunnableConfig) -> EmptyState:
+    cur_step = config["metadata"]["langgraph_step"]
+    logger.info("cur_step: {}, node_d 被触发", cur_step)
+    return {}
+
+def node_e(state: EmptyState, config: RunnableConfig) -> EmptyState:
+    cur_step = config["metadata"]["langgraph_step"]
+    logger.info("cur_step: {}, node_e 被触发", cur_step)
+    return {}
+
+builder = StateGraph(state_schema=EmptyState)
+builder.add_node("node_a", node_a)
+builder.add_node("node_b", node_b)
+builder.add_node("node_c", node_c)
+builder.add_node("node_d", node_d)
+builder.add_node("node_e", node_e)
+
+builder.add_edge(START, "node_a")
+builder.add_edge("node_a", "node_b")
+builder.add_edge("node_a", "node_c")
+builder.add_edge("node_b", "node_d")
+builder.add_edge(["node_c", "node_d"], "node_e")
+
+graph = builder.compile()
+graph.invoke({})
+
+from IPython.display import display
+display(graph)
+```
+
+**运行结果如下**
+
+```json
+2026-06-05 14:55:01.705 | INFO     | __main__:node_a:12 - cur_step: 1, node_a 被触发
+2026-06-05 14:55:01.708 | INFO     | __main__:node_b:17 - cur_step: 2, node_b 被触发
+2026-06-05 14:55:01.710 | INFO     | __main__:node_c:22 - cur_step: 2, node_c 被触发
+2026-06-05 14:55:01.713 | INFO     | __main__:node_d:27 - cur_step: 3, node_d 被触发
+2026-06-05 14:55:01.714 | INFO     | __main__:node_e:32 - cur_step: 4, node_e 被触发
+```
+
+由运行结果可知：
+
+* **`node_a`** 在第 1 个超步执行；
+* **`node_b`** 和 **`node_c`** 在第 2 个超步并行执行；
+* **`node_d`** 在第 3 个超步执行；
+* **`node_e`** 在第 4 个超步执行。
+
+虽然 **`node_c`** 在第 2 个超步已经执行完成，但是 **`node_e`** 并不会立刻触发。
+因为这里使用的是：
+
+```python
+builder.add_edge(["node_c", "node_d"], "node_e")
+```
+
+这表示 **`node_e`** 需要等待 **`node_c`** 和 **`node_d`** 两个上游节点全部完成后，才会被触发一次。
+
+因此，这种写法对应的是 **“与”触发**：等待所有上游分支到达方可触发。
+
+## “**或**”触发
+
+任意上游分支到达即可触发
+
+另一种情况是：多个上游分支分别连接到同一个下游节点，但它们之间没有显式的同步等待关系。
+
+**示例如下**
+
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langchain_core.runnables import RunnableConfig
+
+from loguru import logger
+
+class EmptyState(TypedDict):
+    pass
+
+def node_a(state: EmptyState, config: RunnableConfig) -> EmptyState:
+    cur_step = config["metadata"]["langgraph_step"]
+    logger.info("cur_step: {}, node_a 被触发", cur_step)
+    return {}
+
+def node_b(state: EmptyState, config: RunnableConfig) -> EmptyState:
+    cur_step = config["metadata"]["langgraph_step"]
+    logger.info("cur_step: {}, node_b 被触发", cur_step)
+    return {}
+
+def node_c(state: EmptyState, config: RunnableConfig) -> EmptyState:
+    cur_step = config["metadata"]["langgraph_step"]
+    logger.info("cur_step: {}, node_c 被触发", cur_step)
+    return {}
+
+def node_d(state: EmptyState, config: RunnableConfig) -> EmptyState:
+    cur_step = config["metadata"]["langgraph_step"]
+    logger.info("cur_step: {}, node_d 被触发", cur_step)
+    return {}
+
+def node_e(state: EmptyState, config: RunnableConfig) -> EmptyState:
+    cur_step = config["metadata"]["langgraph_step"]
+    logger.info("cur_step: {}, node_e 被触发", cur_step)
+    return {}
+
+builder = StateGraph(state_schema=EmptyState)
+builder.add_node("node_a", node_a)
+builder.add_node("node_b", node_b)
+builder.add_node("node_c", node_c)
+builder.add_node("node_d", node_d)
+builder.add_node("node_e", node_e)
+
+builder.add_edge(START, "node_a")
+builder.add_edge("node_a", "node_b")
+builder.add_edge("node_a", "node_c")
+builder.add_edge("node_b", "node_d")
+
+# 独立触发：node_c 完成后可以触发 node_e
+builder.add_edge("node_c", "node_e")
+# 独立触发：node_d 完成后可以触发 node_e
+builder.add_edge("node_d", "node_e")
+
+graph = builder.compile()
+graph.invoke({})
+
+from IPython.display import display
+display(graph)
+```
+
+**运行结果如下**
+
+```json
+2026-06-05 15:09:11.715 | INFO     | __main__:node_a:12 - cur_step: 1, node_a 被触发
+2026-06-05 15:09:11.720 | INFO     | __main__:node_b:17 - cur_step: 2, node_b 被触发
+2026-06-05 15:09:11.723 | INFO     | __main__:node_c:22 - cur_step: 2, node_c 被触发
+2026-06-05 15:09:11.729 | INFO     | __main__:node_d:27 - cur_step: 3, node_d 被触发
+2026-06-05 15:09:11.729 | INFO     | __main__:node_e:32 - cur_step: 3, node_e 被触发
+2026-06-05 15:09:11.732 | INFO     | __main__:node_e:32 - cur_step: 4, node_e 被触发
+```
+
+
+
+从运行结果可以看出，**`node_e`** 被触发了两次：
+
+1. **`node_c`** 在第 2 个超步执行完成后，触发 **`node_e`** 在第 3 个超步执行；
+2. **`node_d`** 在第 3 个超步执行完成后，再次触发 **`node_e`** 在第 4 个超步执行。
+
+原因是这里使用了两条独立的边：
+
+```python
+builder.add_edge("node_c", "node_e")
+builder.add_edge("node_d", "node_e")
+```
+
+这表示 **`node_c`** 和 **`node_d`** 都可以分别触发 **`node_e`**，它们之间没有同步等待关系。
+
+因此，这种写法对应的是 **独立触发**，也可以类比为 **“或”触发**。
+
+需要特别注意：
+
+```python
+builder.add_edge(["node_c", "node_d"], "node_e")
+```
+
+和
+
+```python
+builder.add_edge("node_c", "node_e")
+builder.add_edge("node_d", "node_e")
+```
+
+不是等价写法。
+
+前者表示 **等待多个上游全部完成后才触发一次**；
+后者表示 **多个上游分支分别独立触发下游节点**。
+
+
+
 ## defer node execution
 
 ```python
@@ -114,7 +333,7 @@ builder = StateGraph(MyState)
 builder.add_node("node_a", node_a)
 builder.add_node("node_b", node_b)
 builder.add_node("node_c", node_c)
-builder.add_node("aggregator", aggregator, defer=False)  # 👈 默认值
+builder.add_node("aggregator", aggregator, defer=true)  # 👈 默认值
 
 builder.add_edge(START, "node_a")
 builder.add_edge(START, "node_b")
@@ -124,7 +343,7 @@ builder.add_edge("node_b", "aggregator")
 builder.add_edge("node_c", "aggregator")
 builder.add_edge("aggregator", "final_node")
 
-这个案例中，defer设置为true,false没有区别，都是，都要等待a,b,c都执行完才会被触发aggregator
+a,b,c斗完成，aggregator才会执行。
 ```
 
 
