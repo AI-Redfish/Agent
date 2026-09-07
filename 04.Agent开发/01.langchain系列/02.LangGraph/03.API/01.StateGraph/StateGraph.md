@@ -412,53 +412,38 @@ builder.add_conditional_edges(
 
 # Command
 
-## 基本作用
+**`Command`** 是 **`LangGraph`** 中用于控制图执行的多功能原语，它的构造器可以接受四个参数，并记录在同名类属性中：
 
-`Command` 允许一个节点同时完成两件事：
+- **`update`**：更新图状态，效果等同于节点直接返回状态更新字典；
+- **`goto`**：指定节点执行完成后的跳转目标，可用于运行时条件分支。当需要同时更新状态并控制跳转时，比单独使用条件边更合适；
+- **`graph`**：存在子图时，用于指定跳转发生在哪一层图中，例如从子图跳转到父图；
+- **`resume`**：用于恢复被中断的图执行，常见于 **`human-in-the-loop`** 场景。
+
+
+
+## 基本使用
+
+与 **`add_conditional_edges()`** 相比，**`Command`** 更适合“状态更新”和“控制流跳转”需要放在同一个节点返回值中的场景。
+
+例如，一个节点既要更新状态，又要根据当前状态决定下一步跳转目标，就可以返回：
+
+```python
+return Command(
+    update={"foo": "bar"},
+    goto="next_node"
+)
+```
+
+以上同时完成两件事：
 
 1. 更新 state。
 2. 指定下一步跳转到哪个节点。
 
-适合把“节点逻辑”和“路由决策”放在同一个函数中。
 
-示意：
+
+**案例**
 
 ```python
-from langgraph.types import Command
-
-
-def classify(state) -> Command:
-    if "退款" in state["question"]:
-        return Command(
-            update={"intent": "refund"},
-            goto="refund_node",
-        )
-    return Command(
-        update={"intent": "general"},
-        goto="general_node",
-    )
-```
-
-## 使用建议
-
-适合使用 `Command` 的场景：
-
-- 节点内部已经得出下一步，不想再写独立路由函数。
-- 需要同时更新状态并跳转。
-- 子图需要跳转回父图。
-- interrupt 恢复后需要继续控制流程。
-
-不建议滥用：
-
-- 简单固定流程用普通边即可。
-- 简单分支用条件边更清晰。
-- 如果所有节点都用 `Command`，图结构会变得不直观。
-
-
-
-## 完整案例
-
-```
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
 from typing import TypedDict
@@ -510,156 +495,189 @@ result = graph.invoke({"value": "初始值"})
 print(f"最终状态: {result}")
 ```
 
+## 使用建议
 
+适合使用 `Command` 的场景：
 
-# Send-编排器工作器
+- 节点内部已经得出下一步，不想再写独立路由函数。
+- 需要同时更新状态并跳转。
+- 子图需要跳转回父图。
+- interrupt 恢复后需要继续控制流程。
 
-**使用场景**
+不建议滥用：
 
-需要同时处理多个相同任务，且任务数量未知。
-
-多个任务处理技术后对结果进行合并。
-
-
-
-**组成部分**
-
-| 角色             | 英文   | 中文含义        | 职责                                     |
-| :--------------- | :----- | :-------------- | :--------------------------------------- |
-| **Orchestrator** | 编排器 | 乐队指挥/编舞师 | 负责**规划、协调、分配**任务，不亲自干活 |
-| **Worker**       | 工作器 | 工人/执行者     | 负责**具体执行**分配到的子任务           |
-| **Synthesizer**  | 合成器 | 合成/整合者     | 负责**汇总、拼接**所有结果               |
+- 简单固定流程用普通边即可。
+- 简单分支用条件边更清晰。
+- 如果所有节点都用 `Command`，图结构会变得不直观。
 
 
 
-## 案例
-
-```
-from typing import Annotated, List
-import operator
 
 
-# Schema for structured output to use in planning
-class Section(BaseModel):
-    name: str = Field(
-        description="Name for this section of the report.",
-    )
-    description: str = Field(
-        description="Brief overview of the main topics and concepts to be covered in this section.",
-    )
 
 
-class Sections(BaseModel):
-    sections: List[Section] = Field(
-        description="Sections of the report.",
-    )
 
 
-# Augment the LLM with schema for structured output
-planner = llm.with_structured_output(Sections)
+# Send
+
+**`Send`** 结合 **`add_conditional_edges()`** 使用，可以用于动态扇出任务
+
+所谓**扇出（Fan-out）**，是指一个上游节点像扇子一样，向外分发出多个下游任务。例如，根据一个主题，同时生成诗、词、笑话三个任务；又如，根据一个列表，为列表中的每个元素动态启动一个处理任务。
+
+具体来说，路由函数可以返回一个 **`Send`** 实例序列。每个 **`Send`** 实例都描述了一次独立的任务分发：
+
+- 分发到哪个下游节点；
+- 给这个下游节点传入什么私有状态。
+
+运行时，**`LangGraph`** 会根据返回的每个 **`Send`** 实例创建对应的任务。这些任务通常会在同一个超步中并行执行。
 
 
+
+## 写入不同字段
+
+**实例如下**
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict,Literal
+from collections.abc import Sequence
+from langchain_deepseek import ChatDeepSeek
+from langchain.messages import HumanMessage
+from langchain.chat_models import init_chat_model
 from langgraph.types import Send
 
+import os
 
-# Graph state
-class State(TypedDict):
-    topic: str  # Report topic
-    sections: list[Section]  # List of report sections
-    completed_sections: Annotated[
-        list, operator.add
-    ]  # All workers write to this key in parallel
-    final_report: str  # Final report
+from dotenv import load_dotenv
 
+load_dotenv()
 
-# Worker state
-class WorkerState(TypedDict):
-    section: Section
-    completed_sections: Annotated[list, operator.add]
+api_key = os.getenv("OPENAI_API_KEY")
+model_name = os.getenv("OPENAI_MODEL")  
+base_url = os.getenv("OPENAI_BASE_URL")  
+model_provider = os.getenv("MODEL_PROVIDER")  
 
-
-# Nodes
-def orchestrator(state: State):
-    """Orchestrator that generates a plan for the report"""
-
-    # Generate queries
-    report_sections = planner.invoke(
-        [
-            SystemMessage(content="Generate a plan for the report."),
-            HumanMessage(content=f"Here is the report topic: {state['topic']}"),
-        ]
-    )
-
-    return {"sections": report_sections.sections}
-
-
-def llm_call(state: WorkerState):
-    """Worker writes a section of the report"""
-
-    # Generate section
-    section = llm.invoke(
-        [
-            SystemMessage(
-                content="Write a report section following the provided name and description. Include no preamble for each section. Use markdown formatting."
-            ),
-            HumanMessage(
-                content=f"Here is the section name: {state['section'].name} and description: {state['section'].description}"
-            ),
-        ]
-    )
-
-    # Write the updated section to completed sections
-    return {"completed_sections": [section.content]}
-
-
-def synthesizer(state: State):
-    """Synthesize full report from sections"""
-
-    # List of completed sections
-    completed_sections = state["completed_sections"]
-
-    # Format completed section to str to use as context for final sections
-    completed_report_sections = "\n\n---\n\n".join(completed_sections)
-
-    return {"final_report": completed_report_sections}
-
-
-# Conditional edge function to create llm_call workers that each write a section of the report
-def assign_workers(state: State):
-    """Assign a worker to each section in the plan"""
-
-    # Kick off section writing in parallel via Send() API
-    return [Send("llm_call", {"section": s}) for s in state["sections"]]
-
-
-# Build workflow
-orchestrator_worker_builder = StateGraph(State)
-
-# Add the nodes
-orchestrator_worker_builder.add_node("orchestrator", orchestrator)
-orchestrator_worker_builder.add_node("llm_call", llm_call)
-orchestrator_worker_builder.add_node("synthesizer", synthesizer)
-
-# Add edges to connect nodes
-orchestrator_worker_builder.add_edge(START, "orchestrator")
-orchestrator_worker_builder.add_conditional_edges(
-    "orchestrator", assign_workers, ["llm_call"]
+# 创建模型（使用 init_chat_model）
+model = init_chat_model(
+    model=model_name,
+    model_provider=model_provider,
+    api_key=api_key,
+    base_url=base_url,
+    temperature=0,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2
 )
-orchestrator_worker_builder.add_edge("llm_call", "synthesizer")
-orchestrator_worker_builder.add_edge("synthesizer", END)
 
-# Compile the workflow
-orchestrator_worker = orchestrator_worker_builder.compile()
+CONTENT_TYPES = ["poem", "ci_poem", "joke"]
 
-# Show the workflow
-display(Image(orchestrator_worker.get_graph().draw_mermaid_png()))
 
-# Invoke
-state = orchestrator_worker.invoke({"topic": "Create a report on LLM scaling laws"})
+class OverAllState(TypedDict):
+    topic: str
+    poem: str
+    ci_poem: str
+    joke: str
 
-from IPython.display import Markdown
-Markdown(state["final_report"])
+class WorkerState(TypedDict):
+    """
+    私有状态，只对 Worker 节点可用
+    """
+    content_type: Literal["poem", "ci_poem", "joke"]
+    prompt: str
+
+class InputState(TypedDict):
+    topic: str
+
+class OutputState(TypedDict):
+    poem: str
+    ci_poem: str
+    joke: str
+
+def worker_node(state: WorkerState) -> OutputState:
+    content_type = state["content_type"]
+    prompt = state["prompt"]
+
+    content = model.invoke([HumanMessage(prompt)]).content
+    return {
+        content_type: content
+    }
+
+def router(state: InputState) -> Sequence[Send]:
+    prompt = "请生成关于 {} 的 {}"
+    english2chinese = {
+        "poem": "一首诗",
+        "ci_poem": "一首词",
+        "joke": "一个笑话"
+    }
+
+    topic = state["topic"]
+
+    return [Send(
+            "worker_node",
+            {
+                "content_type": content_type,
+                "prompt": prompt.format(topic, english2chinese[content_type]),
+            }
+        ) for content_type in CONTENT_TYPES
+    ]
+
+builder = StateGraph(state_schema=OverAllState, input_schema=InputState, output_schema=OutputState)
+builder.add_node("worker_node", worker_node)
+builder.add_conditional_edges(
+    START,
+    router,
+    path_map=["worker_node"]
+)
+builder.add_edge("worker_node", END)
+
+graph = builder.compile()
+res = graph.invoke({"topic": "布偶狗"})
+print(res)
 ```
+
+在这个案例中，**`router()`** 并没有直接返回某一个固定的下游节点名称，而是返回了多个 **`Send`** 实例：
+
+```python
+[ 
+    Send("worker_node", {"content_type": "poem", ...}), 
+    Send("worker_node", {"content_type": "ci_poem", ...}), 
+    Send("worker_node", {"content_type": "joke", ...}), 
+]
+```
+
+因此，运行时会动态创建三个指向 **`worker_node`** 的任务。三个任务执行的是同一个节点函数，但它们接收到的私有状态不同，所以可以分别生成**诗、词和笑话**。
+
+**输出如下**
+
+```json
+{
+  "poem": "## 《布偶狗》\n\n它曾蜷在藤椅里数谷粒，\n一只耳朵垂向磨损的地板。\n现在檐角的水滴是它的心跳，\n牵动穿珠眼珠转动。\n\n穿碎花裙的小女孩，\n用膝盖丈量过它的静默。\n她松开橡皮筋的午后，\n线缝里渗出稚嫩的气流。\n\n有人将米尺抖成琴弦，\n折叠的假寐里，\n它代替远方的稻草人，\n在积雨的布纹中扎根。\n\n田野在练习告别，\n而它守着发芽的梯田。\n当月光填满每道接缝，\n皮毛间涌出成群的往事。",
+  "ci_poem": "《临江仙·布偶狗》\n绒作皮毛棉作骨，琉璃眸底春凝。\n也无吠影也无惊。倚床垂耳听，抱主索糖迎。\n\n不向残羹争冷炙，旧衾犹带余馨。\n学人解语却无声。偶沾星与月，懒问雨和晴。\n\n注：我以布偶狗为题，通过“绒作皮毛棉作骨”等句，以拟人手法赋予玩偶灵性。下阕“不向残羹争冷炙”暗喻玩偶超然物外的品性，末句“偶沾星与月”更添空灵意境，将玩偶与自然意象相融，表达出静默相伴的永恒温馨。",
+  "joke": "# 布偶狗的笑话\n\n有一天，一只布偶狗走进一家宠物店，对店主说：\n\n“老板，我想买一只真正的狗朋友。”\n\n店主看了看它，好奇地问：“你不是狗吗？”\n\n布偶狗叹了口气，说：“唉，我是布偶做的，只能陪主人睡觉和卖萌，但我不会汪汪叫，也不会摇尾巴，更不会追球。每次主人想带我出去散步，我只能在包里安静地坐着，感觉自己特别没用。”\n\n店主笑了笑，说：“那你想要什么样的狗朋友？”\n\n布偶狗眼睛一亮：“我想要一只真正的狗，可以带着我去跑、去叫、去玩！我要学习怎么当一只好狗！”\n\n店主想了想，指着一只活泼的小金毛说：“那这只怎么样？它精力旺盛，可以教你很多。”\n\n布偶狗激动地冲过去，结果因为自己是布做的，腿太软，直接摔了个跟头，四脚朝天躺在地上。\n\n小金毛跑过来，闻了闻它，然后叼起它的棉花尾巴，一路拖到了狗窝里。\n\n布偶狗挣扎着喊：“等等！我还没学会怎么站起来！”\n\n小金毛歪了歪头，汪汪了两声，像是说：“没事，我先教你躺平。”\n\n从此以后，布偶狗成了小金毛最好的“垫子”——每天被压在身下睡觉，还觉得特别温暖。\n\n布偶狗心想：“原来，当一只合格的布偶狗朋友，最重要的技能是——当沙发。” 🛋️🐾"
+}
+```
+
+
+
+此处图结构能成功渲染的关键，是在 **`path_map`** 中显式声明了可能被路由到的下游节点：
+
+```python
+path_map=["worker_node"]
+```
+
+因为 **`Send`** 的目标和数量可以运行时动态决定。通过 **`path_map`** 声明候选下游节点后。
+
+补充说明：如果多个并行任务写入同一个状态字段，通常需要为该字段定义 reducer，用于合并多个任务的输出。本例中三个任务分别写入 **`poem`**、**`ci_poem`**、**`joke`** 三个不同字段，因此不会发生同一字段的并发合并问题。
+
+
+
+
+
+## 写入相同字段
+
+
+
+
 
 
 
