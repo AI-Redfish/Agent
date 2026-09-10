@@ -287,19 +287,17 @@ with PostgresSaver.from_conn_string(DB_URL) as checkpointer:
 
 # 持久化模式
 
-### 6.3.1. 概述
-
 启用 **`Checkpointer`** 后，**`LangGraph`** 会在执行过程中保存检查点。
 
-检查点写入**越及时**，系统在异常中断后可恢复的状态**越完整**，**容灾能力越强**；但更及时的持久化通常也意味着**更多中间写入**，或**额外的**阻塞式**等待**，带来**额外的性能开销和响应延迟**（从调用者的角度考虑）。
+检查点写入**越及时**，系统在异常中断后可恢复的状态**越完整**，**容灾能力越强**；但更及时的持久化通常也意味着**更多中间写入**，或**额外的**阻
+
+塞式**等待**，带来**额外的性能开销和响应延迟**（从调用者的角度考虑）。
 
 **`LangGraph`** 支持三种持久化模式，采用不同的检查点保存时机，在容灾能力和性能开销、响应时效性之间作取舍。
 
 - **`exit`**：退出模式。只在计算图正常结束、异常退出、被中断（如 **`Human-In-The-Loop`** 中断）时保存检查点。**不能处理中途进程崩溃的场景**。这种模式响应性能开销最小，但容灾能力最弱。
 
 - **`async`**：异步模式。默认模式，顾名思义，检查点在后台异步写入。
-
-  它会在每个超步结束后写入**完整检查点（主检查点）**，并在图中任务执行完毕后记录**中间结果**。
 
   和 **`exit`** 模式相比，增加了性能开销，但写入操作发生在后台，不会引入明显的响应延迟，同时提升了容灾能力。
 
@@ -317,18 +315,11 @@ with PostgresSaver.from_conn_string(DB_URL) as checkpointer:
 | **`async`** | 每个超步末尾写入主检查点，任务完成后写入中间结果，后台异步写入 | 高       | 较高     | 较强     |
 | **`sync`**  | 和 **`async`** 区别在于，进入下一个超步之前等待当前主检查点的写入任务完成 | 高       | 最高     | 最强     |
 
-### 6.3.2. 示例
-
 持久化模式影响的是检查点写入时机和故障恢复能力，通常**不会影响**正常情况下的**业务输出**。
 
 也就是说，同一张图在正常执行完成时，使用 **`exit`**、**`async`** 或 **`sync`**，最终返回结果通常是一样的。真正的区别主要体现在**异常中断**或**进程崩溃**后**恢复执行**时。
 
-> **`durability` 控制的是检查点写入策略，不改变图本身的执行逻辑。**
 
-要真正看到不同模式的差异
-
-- 可以在学习**使用场景**后自行设计案例
-- 或调试源码，观察不同模式下的写入时机
 
 **示例如下**
 
@@ -403,33 +394,19 @@ durability="async"
 durability="sync"
 ```
 
-**运行结果如下**
 
-```
-你好！很高兴见到你，有什么我可以帮助你的吗？😊
-============================== -> 完整消息列表 <- ==============================
-================================ Human Message =================================
 
-你好
-================================== Ai Message ==================================
 
-你好！很高兴见到你，有什么我可以帮助你的吗？😊
-```
 
-![image-20260609151649967](assets/image-20260609151649967.png)
+# 查看历史检查点
 
-## 6.4. 查看历史检查点
+## get_state_history
 
-**`LangGraph`** 在配置检查点存储器后，会把同一个 **`thread_id`** 下的执行过程保存为一组检查点。通过这些检查点，我们可以查看图运行的中间状态，也可以为后续的检查点回溯（重放、分叉）和失败恢复做准备。
+返回一个历史检查点迭代器。将其转换为列表后，可以看到一组 StateSnapshot 对象。
 
-本节主要介绍两个常用方法：
 
-* **`graph.get_state_history(config)`**：查看指定会话的完整历史检查点。
-* **`graph.get_state(config)`**：查看指定会话的**最新**检查点，或者查看某个**指定** **`checkpoint_id`** 对应的检查点。
 
-### 6.4.1. 查看完整历史检查点列表
-
-#### 6.4.1.1. 示例
+**案例**
 
 ```python
 from typing import TypedDict
@@ -518,23 +495,7 @@ history_checkpoints = list(graph.get_state_history(config=config))
 print(history_checkpoints)
 ```
 
-#### 6.4.1.2. 运行结果
-
-1. 运行日志
-
-```json
-2026-06-09 17:24:10.266 | INFO     | __main__:node_joke:42 - node_joke 已执行
-2026-06-09 17:24:10.268 | INFO     | __main__:node_poem:33 - node_poem 已执行
-2026-06-09 17:24:14.177 | INFO     | __main__:node_output:51 - node_output 已执行
-```
-
-由于 **`node_poem`** 和 **`node_joke`** 都从 **`START`** 出发，并且彼此没有依赖关系，所以它们会被调度到同一个超步中执行。实际日志顺序可能不同，例如可能先打印 **`node_joke`**，也可能先打印 **`node_poem`**。
-
-2. 拓扑结构
-
-![image-20260609173103640](assets/image-20260609173103640.png)
-
-3. 最终结果和检查点列表
+输出
 
 ```json
 ============================== -> 运行结果 <- ==============================
@@ -750,195 +711,11 @@ res: {} {'final_output': '关于 猫咪 的七言绝句：\n《戏猫》\n狸奴
 ]
 ```
 
-#### 6.4.1.3. 分析
 
-##### 6.4.1.3.1. StateSnapshot
 
-**`get_state_history()`** 返回的是一个历史检查点迭代器。将其转换为列表后，可以看到一组 **`StateSnapshot`** 对象。
+## get_state
 
-**`StateSnapshot`** 是检查点的开发者视图，字段含义如下
-
-- **`values`**：当前检查点的状态值
-
-- **`next`**：从该检查点继续执行时，下一步将要执行的节点，即归属于下一个超步的节点
-
-- **`config`**：当前检查点配置。常见结构如下：
-  
-    ```json
-    {
-        "configurable": {
-            "thread_id": "...",
-            "checkpoint_ns": "...",
-            "checkpoint_id": "..."
-        }
-    }
-    ```
-  
-  其中
-  
-  - **`configurable`**：用于记录检查点的可配置信息，可能包含用户自定义字段，它一定包含以下三个字段：
-  
-    - **`thread_id`**：会话唯一标识
-    - **`checkpoint_ns`**：检查点命名空间。根图的命名空间通常为空字符串 **`""`**；子图会使用非空命名空间。
-    - **`checkpoint_id`**：检查点唯一标识
-  
-    这三个字段可以唯一标识一条检查点记录，在大多数检查点存储器实现中，写入检查点后端时都会将它们作为检查点的**唯一键**
-  
-- **`metadata`**：检查点元数据，本节只需要关注 **`step`** 字段，后者是当前检查点对应的超步编号
-
-- **`created_at`**：检查点创建时间
-
-- **`parent_config`**：父检查点、即上一个检查点的配置
-
-- **`tasks`**：当前检查点关联的待执行任务信息，元素类型通常是 **`PregelTask`**。
-
-  **`tasks`** 通常和 **`next`** 对应，表示从当前检查点继续执行时，下一步将要运行的任务。
-
-  **需要注意的是**，**`tasks`** 中还可能包含这些任务已经成功（**`result`**）或失败（**`error`**）的任务记录，这是在下一个超步执行过程中记录的中间结果。在失败恢复场景中，可以避免重复执行已成功节点。
-
-- **`interrupts`**：当前图的中断信息，中断机制详见下文
-
-##### 6.4.1.3.2. 检查点主要信息说明
-
-本例中检查点按照如下顺序返回
-
-```python
-Step 2 → Step 1 → Step 0 → Step -1
-```
-
-即
-
-```python
-最新检查点 → 最旧检查点
-```
-
-其中：
-
-1. **`step=-1`**
-
-   这是输入检查点，**`metadata["source"] == "input"`**，这表示该检查点是在运行时初始化时被记录的，尚未进入图计算循环。
-
-   此时用户输入还没有真正变成普通业务节点可消费的状态，因此
-
-   ```python
-   values={}
-   ```
-
-   从这个检查点继续执行，下一步是内部启动节点 **`__start__`**，因此：
-
-   ```python
-   next=("__start__",)
-   ```
-
-2. **`step=0`**
-
-   这是图计算循环的第一个检查点，**`metadata["source"] == "loop"`**，这表示检查点是在图计算循环中被写入的。
-
-   此时，**`__start__`** 已经把用户输入写入状态，所以 **`values`** 中已经可以看到状态信息，如下：
-
-   ```python
-   values={
-       "topic": "猫咪"
-   }
-   ```
-
-   从这个检查点继续执行，**`node_poem`** 和 **`node_joke`** 将在下一个超步执行，因此：
-
-   ```python
-   next=("node_poem", "node_joke")
-   ```
-
-3. **`step=1`**
-
-   这是图计算循环的第二个检查点，同样 **`metadata["source"] == "loop"`**。
-
-   同时，它对应第一个执行图节点计算逻辑的超步。
-
-   此时，**`node_poem`** 和 **`node_joke`** 的输出已经到状态中，因此：
-
-   ```python
-   values={
-       "topic": "猫咪",
-       "poem": "...",
-       "joke": "..."
-   }
-   ```
-
-   从这个检查点开始，下游的汇总节点 **`node_output`** 满足执行条件，因此：
-
-   ```python
-   next=("node_output",)
-   ```
-
-4. **`step=2`**
-
-   这是图计算循环的第三个检查点，同样 **`metadata["source"] == "loop"`**
-
-   此时，**`node_output`** 已经执行完成，最终输出也已经写入状态，因此：
-   
-   ```python
-   values={
-       "topic": "猫咪",
-       "poem": "...",
-       "joke": "...",
-       "final_output": "..."
-   }
-   ```
-
-   此时，图已经执行结束，所以：
-   
-   ```python
-   next=()
-   ```
-
-##### 6.4.1.3.3. `tasks`字段说明
-
-**`tasks`** 是一个元组，其中的每个元素都是一个 **`PregelTask`** 实例
-
-**`tasks`** 表示：如果从当前检查点继续执行，下一步要运行哪些任务。比如在 **`step=0`** 的检查点中：
-
-```python
-next=("node_poem", "node_joke")
-tasks=(
-    PregelTask(name="node_poem", ...),
-    PregelTask(name="node_joke", ...),
-)
-```
-
-这表示从该检查点继续执行时，下一步会运行 **`node_poem`** 和 **`node_joke`** 节点，底层执行的是它们的同名任务。
-
-不过，查看历史检查点时，**`PregelTask`** 实例的 **`result`** 字段可能非空，如：
-
-```python
-PregelTask(
-    name="node_poem",
-    result={
-        "poem": "..."
-    }
-)
-```
-
-这看起来像是“上一个检查点中提前保存了下一个超步的执行结果”。实际上：
-
-* 完整的检查点（主检查点）是在超步末尾保存的
-
-* 但在一个超步内部，**`LangGraph`** 还会记录节点级别的计算结果
-
-* **`checkpoint["id"]`** 会在保存主检查点前由 **`create_checkpoint()`** 推进为新的 **`ID`**，然后用这个 **`ID`** 写入主检查点（假设当前超步为 **`S1`**）。下一轮（超步为 **`S2`**）计算循环中，任务执行完毕后的中间结果会用相同的 **`ID`** 写入。
-
-  因此，下一轮（超步为 **`S2`**）任务的计算结果绑定到了“当前超步（超步为 **`S1`**）的主检查点”。
-
-* 从检查点后端检索时，会按照 **`checkpoint_id`** 将主检查点和中间结果组织起来
-
-* 因此，检索到的历史检查点列表中，主检查点（超步为 **`S1`**）和下一个超步（超步为 **`S2`**）的中间结果会被放在同一个 **`StateSnapshot`** 中
-
-* 如果同一个超步里有多个并行任务，其中部分任务已经成功，另一个任务失败，那么成功任务的结果可以被保存下来；
-
-* 后续恢复时，**`LangGraph`** 可以复用这些已成功任务的结果，避免重复执行已经成功的节点。
-
-在 **`6.5.3.` 失败恢复** 一节，我们将看到某个超步中部分任务执行成功、部分任务失败导致计算异常终止，恢复运行时已成功任务未被重新执行。
-
-### 6.4.2. 查看最新检查点
+**`graph.get_state(config)`**：查看指定会话的**最新**检查点。
 
 如果只想查看当前线程的最新检查点，可以使用：
 
@@ -1036,89 +813,9 @@ latest_history_checkpoint = graph.get_state(config=config)
 print(latest_history_checkpoint)
 ```
 
-**运行结果如下**
 
-1. 运行日志
 
-   ```json
-   2026-06-10 11:23:59.610 | INFO     | __main__:node_poem:33 - node_poem 已执行
-   2026-06-10 11:23:59.611 | INFO     | __main__:node_joke:42 - node_joke 已执行
-   2026-06-10 11:24:01.424 | INFO     | __main__:node_output:51 - node_output 已执行
-   ```
-
-2. 拓扑结构
-
-   ![image-20260610112506158](assets/image-20260610112506158.png)
-
-3. 运行结果及检查点信息
-
-   ```json
-   ============================== -> 运行结果 <- ==============================
-   res: {} {'final_output': '关于 猫咪 的七言绝句：\n《戏题狸奴》\n昼眠锦褥夜巡檐，碧眼圆瞳映月纤。\n捕鼠本非真本领，得鱼时复近妆奁。\n笑话：\n小猫咪第一次照镜子，看到里面的自己，吓得炸毛：“你是谁？！” 它绕到镜子后面找了一圈，没找到，又回来对着镜子哈气。 最后它恍然大悟，对主人说：“我明白了，那是个隐藏的摄像头！”'}
-   ============================== -> 最新历史检查点 <- ==============================
-   StateSnapshot(
-       values={
-           "topic": "猫咪",
-           "poem": (
-               "《戏题狸奴》\n"
-               "昼眠锦褥夜巡檐，碧眼圆瞳映月纤。\n"
-               "捕鼠本非真本领，得鱼时复近妆奁。"
-           ),
-           "joke": (
-               "小猫咪第一次照镜子，看到里面的自己，吓得炸毛：“你是谁？！” "
-               "它绕到镜子后面找了一圈，没找到，又回来对着镜子哈气。 "
-               "最后它恍然大悟，对主人说：“我明白了，那是个隐藏的摄像头！”"
-           ),
-           "final_output": (
-               "关于 猫咪 的七言绝句：\n"
-               "《戏题狸奴》\n"
-               "昼眠锦褥夜巡檐，碧眼圆瞳映月纤。\n"
-               "捕鼠本非真本领，得鱼时复近妆奁。\n"
-               "笑话：\n"
-               "小猫咪第一次照镜子，看到里面的自己，吓得炸毛：“你是谁？！” "
-               "它绕到镜子后面找了一圈，没找到，又回来对着镜子哈气。 "
-               "最后它恍然大悟，对主人说：“我明白了，那是个隐藏的摄像头！”"
-           ),
-       },
-       next=(),
-       config={
-           "configurable": {
-               "thread_id": "123",
-               "checkpoint_ns": "",
-               "checkpoint_id": "1f1647bd-3512-631a-8002-4e48b5ecda6d",
-           }
-       },
-       metadata={
-           "source": "loop",
-           "step": 2,
-           "parents": {},
-       },
-       created_at="2026-06-10T03:24:01.426084+00:00",
-       parent_config={
-           "configurable": {
-               "thread_id": "123",
-               "checkpoint_ns": "",
-               "checkpoint_id": "1f1647bd-350d-62c7-8001-34cd7fa012ed",
-           }
-       },
-       tasks=(),
-       interrupts=(),
-   )
-   ```
-
-   **`graph.get_state(config=config)`** 只返回当前会话的最新检查点。
-   
-   在本例中，图已经执行完成，所以最新检查点具有以下特征：
-   
-   ```python
-   next=()
-   tasks=()
-   ```
-   
-   这表示没有后续节点需要继续执行。
-   
-
-### 6.4.3. 根据ID查看指定检查点
+## 查询指定检查点
 
 如果希望查看某个历史检查点，可以在 **`configurable`** 中额外传入 **`checkpoint_id`**：
 
@@ -1136,401 +833,604 @@ print(snapshot)
 
 这样返回的就不是最新检查点，而是指定 **`checkpoint_id`** 对应的历史检查点。
 
-#### 6.4.3.1. 获取历史检查点列表
 
-**示例如下**
 
-```python
-from typing import TypedDict
-from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import InMemorySaver
-from langchain.messages import HumanMessage
-from langchain_deepseek import ChatDeepSeek
+# StateSnapshot
 
-from loguru import logger
-from dotenv import load_dotenv
-load_dotenv(override=True)
+StateSnapshot 是检查点的开发者视图
 
-model = ChatDeepSeek(
-    model="deepseek-v4-flash",
-    extra_body={
-        "thinking": {
-            "type": "disabled"
+
+
+**案例**
+
+```
+{
+  "values": {
+    "topic": "cat",
+    "joke": "Why did the cat cross the road? To get to the other side!",
+    "improved_joke": "",
+    "messages": [
+      {
+        "type": "human",
+        "content": "讲一个关于猫的笑话",
+        "id": "msg_01HZX8K3M9Q7R2F5T6V0W1Y1",
+        "additional_kwargs": {},
+        "response_metadata": {}
+      },
+      {
+        "type": "ai",
+        "content": "Why did the cat cross the road? To get to the other side!",
+        "id": "msg_01HZX8K3M9Q7R2F5T6V0W1Y2",
+        "additional_kwargs": {},
+        "response_metadata": {
+          "finish_reason": "stop",
+          "model_name": "gpt-4o"
         }
-    }
-)
-
-class OverAllState(TypedDict):
-    topic: str
-    poem: str
-    joke: str
-    final_output: str
-
-class InputState(TypedDict):
-    topic: str
-
-class OutputState(TypedDict):
-    final_output: str
-
-def node_poem(state: InputState) -> OverAllState:
-    logger.info(f"node_poem 已执行")
-    topic = state["topic"]
-    poem = model.invoke([HumanMessage(f"写一首关于 {topic} 的七言绝句，不要赏析，只给诗句即可")]).content
-
-    return {
-        "poem": poem
-    }
-
-def node_joke(state: InputState) -> OverAllState:
-    logger.info(f"node_joke 已执行")
-    topic = state["topic"]
-    joke = model.invoke([HumanMessage(f"写一个关于 {topic} 的笑话，尽可能简单，不超过一百字")]).content
-
-    return {
-        "joke": joke
-    }
-
-def node_output(state: OverAllState) -> OutputState:
-    logger.info("node_output 已执行")
-    topic = state["topic"]
-    poem = state["poem"]
-    joke = state["joke"]
-    final_output = f"关于 {topic} 的七言绝句：\n{poem}\n笑话：\n{joke}"
-
-    return {
-        "final_output": final_output
-    }
-
-builder = StateGraph(state_schema=OverAllState, input_schema=InputState, output_schema=OutputState)
-builder.add_node("node_poem", node_poem)
-builder.add_node("node_joke", node_joke)
-builder.add_node("node_output", node_output)
-builder.add_edge(START, "node_poem")
-builder.add_edge(START, "node_joke")
-builder.add_edge("node_poem", "node_output")
-builder.add_edge("node_joke", "node_output")
-builder.add_edge("node_output", END)
-
-checkpointer = InMemorySaver()
-config = {"configurable": {"thread_id": "123"}}
-graph = builder.compile(checkpointer=checkpointer)
-res = graph.invoke({"topic": "猫咪"}, config=config)
-
-from IPython.display import display
-display(graph)
-
-print('=' * 30, '-> 运行结果 <-', '=' * 30)
-print("res: {}", res)
-
-print('=' * 30, '-> 历史检查点列表 <-', '=' * 30)
-history_checkpoints = list(graph.get_state_history(config=config))
-print(history_checkpoints)
-```
-
-**运行结果如下**
-
-```json
-2026-06-11 18:28:29.126 | INFO     | __main__:node_poem:33 - node_poem 已执行
-2026-06-11 18:28:29.128 | INFO     | __main__:node_joke:42 - node_joke 已执行
-2026-06-11 18:28:31.021 | INFO     | __main__:node_output:51 - node_output 已执行
-```
-
-![image-20260611183125275](assets/image-20260611183125275.png)
-
-```json
-============================== -> 运行结果 <- ==============================
-res: {} {'final_output': '关于 猫咪 的七言绝句：\n《戏猫》\n狸奴日午卧青毡，蝶影翩然忽跃前。\n捕得飞花轻似梦，独摇银尾弄春烟。\n笑话：\n猫咪走进咖啡店，点了一杯牛奶。  \n店员问：“要不要加糖？”  \n猫咪摇头：“不用，我最近在减肥。”  \n店员看了看它圆滚滚的肚子：“真的吗？”  \n猫咪叹了口气：“唉，都是猫粮的错。”'}
-============================== -> 历史检查点列表 <- ==============================
-[
-    StateSnapshot(
-        values={
-            "topic": "猫咪",
-            "poem": (
-                "《戏猫》\n"
-                "狸奴日午卧青毡，蝶影翩然忽跃前。\n"
-                "捕得飞花轻似梦，独摇银尾弄春烟。"
-            ),
-            "joke": (
-                "猫咪走进咖啡店，点了一杯牛奶。  \n"
-                "店员问：“要不要加糖？”  \n"
-                "猫咪摇头：“不用，我最近在减肥。”  \n"
-                "店员看了看它圆滚滚的肚子：“真的吗？”  \n"
-                "猫咪叹了口气：“唉，都是猫粮的错。”"
-            ),
-            "final_output": (
-                "关于 猫咪 的七言绝句：\n"
-                "《戏猫》\n"
-                "狸奴日午卧青毡，蝶影翩然忽跃前。\n"
-                "捕得飞花轻似梦，独摇银尾弄春烟。\n"
-                "笑话：\n"
-                "猫咪走进咖啡店，点了一杯牛奶。  \n"
-                "店员问：“要不要加糖？”  \n"
-                "猫咪摇头：“不用，我最近在减肥。”  \n"
-                "店员看了看它圆滚滚的肚子：“真的吗？”  \n"
-                "猫咪叹了口气：“唉，都是猫粮的错。”"
-            ),
-        },
-        next=(),
-        config={
-            "configurable": {
-                "thread_id": "123",
-                "checkpoint_ns": "",
-                "checkpoint_id": "1f165804-acae-618c-8002-5a8b9e940205",
-            }
-        },
-        metadata={
-            "source": "loop",
-            "step": 2,
-            "parents": {},
-        },
-        created_at="2026-06-11T10:28:31.022523+00:00",
-        parent_config={
-            "configurable": {
-                "thread_id": "123",
-                "checkpoint_ns": "",
-                "checkpoint_id": "1f165804-acab-66b3-8001-d74912e4cb07",
-            }
-        },
-        tasks=(),
-        interrupts=(),
-    ),
-
-    StateSnapshot(
-        values={
-            "topic": "猫咪",
-            "poem": (
-                "《戏猫》\n"
-                "狸奴日午卧青毡，蝶影翩然忽跃前。\n"
-                "捕得飞花轻似梦，独摇银尾弄春烟。"
-            ),
-            "joke": (
-                "猫咪走进咖啡店，点了一杯牛奶。  \n"
-                "店员问：“要不要加糖？”  \n"
-                "猫咪摇头：“不用，我最近在减肥。”  \n"
-                "店员看了看它圆滚滚的肚子：“真的吗？”  \n"
-                "猫咪叹了口气：“唉，都是猫粮的错。”"
-            ),
-        },
-        next=("node_output",),
-        config={
-            "configurable": {
-                "thread_id": "123",
-                "checkpoint_ns": "",
-                "checkpoint_id": "1f165804-acab-66b3-8001-d74912e4cb07",
-            }
-        },
-        metadata={
-            "source": "loop",
-            "step": 1,
-            "parents": {},
-        },
-        created_at="2026-06-11T10:28:31.021422+00:00",
-        parent_config={
-            "configurable": {
-                "thread_id": "123",
-                "checkpoint_ns": "",
-                "checkpoint_id": "1f165804-9a92-67bc-8000-dd5ab888e9d5",
-            }
-        },
-        tasks=(
-            PregelTask(
-                id="66dedbf9-3fbb-c539-5f4e-0e3f604a9c56",
-                name="node_output",
-                path=("__pregel_pull", "node_output"),
-                error=None,
-                interrupts=(),
-                state=None,
-                result={
-                    "final_output": (
-                        "关于 猫咪 的七言绝句：\n"
-                        "《戏猫》\n"
-                        "狸奴日午卧青毡，蝶影翩然忽跃前。\n"
-                        "捕得飞花轻似梦，独摇银尾弄春烟。\n"
-                        "笑话：\n"
-                        "猫咪走进咖啡店，点了一杯牛奶。  \n"
-                        "店员问：“要不要加糖？”  \n"
-                        "猫咪摇头：“不用，我最近在减肥。”  \n"
-                        "店员看了看它圆滚滚的肚子：“真的吗？”  \n"
-                        "猫咪叹了口气：“唉，都是猫粮的错。”"
-                    )
-                },
-            ),
-        ),
-        interrupts=(),
-    ),
-
-    StateSnapshot(
-        values={
-            "topic": "猫咪",
-        },
-        next=("node_poem", "node_joke"),
-        config={
-            "configurable": {
-                "thread_id": "123",
-                "checkpoint_ns": "",
-                "checkpoint_id": "1f165804-9a92-67bc-8000-dd5ab888e9d5",
-            }
-        },
-        metadata={
-            "source": "loop",
-            "step": 0,
-            "parents": {},
-        },
-        created_at="2026-06-11T10:28:29.123773+00:00",
-        parent_config={
-            "configurable": {
-                "thread_id": "123",
-                "checkpoint_ns": "",
-                "checkpoint_id": "1f165804-9a90-6db5-bfff-d0eb857db9d8",
-            }
-        },
-        tasks=(
-            PregelTask(
-                id="8b59cf5a-16b4-c734-41c8-56ac9b7614c9",
-                name="node_poem",
-                path=("__pregel_pull", "node_poem"),
-                error=None,
-                interrupts=(),
-                state=None,
-                result={
-                    "poem": (
-                        "《戏猫》\n"
-                        "狸奴日午卧青毡，蝶影翩然忽跃前。\n"
-                        "捕得飞花轻似梦，独摇银尾弄春烟。"
-                    )
-                },
-            ),
-            PregelTask(
-                id="388c08f3-e341-3c76-cfc4-a9825ec97353",
-                name="node_joke",
-                path=("__pregel_pull", "node_joke"),
-                error=None,
-                interrupts=(),
-                state=None,
-                result={
-                    "joke": (
-                        "猫咪走进咖啡店，点了一杯牛奶。  \n"
-                        "店员问：“要不要加糖？”  \n"
-                        "猫咪摇头：“不用，我最近在减肥。”  \n"
-                        "店员看了看它圆滚滚的肚子：“真的吗？”  \n"
-                        "猫咪叹了口气：“唉，都是猫粮的错。”"
-                    )
-                },
-            ),
-        ),
-        interrupts=(),
-    ),
-
-    StateSnapshot(
-        values={},
-        next=("__start__",),
-        config={
-            "configurable": {
-                "thread_id": "123",
-                "checkpoint_ns": "",
-                "checkpoint_id": "1f165804-9a90-6db5-bfff-d0eb857db9d8",
-            }
-        },
-        metadata={
-            "source": "input",
-            "step": -1,
-            "parents": {},
-        },
-        created_at="2026-06-11T10:28:29.123104+00:00",
-        parent_config=None,
-        tasks=(
-            PregelTask(
-                id="63a24d9c-ea6d-0420-4b5a-b978c6eaeb90",
-                name="__start__",
-                path=("__pregel_pull", "__start__"),
-                error=None,
-                interrupts=(),
-                state=None,
-                result={
-                    "topic": "猫咪",
-                },
-            ),
-        ),
-        interrupts=(),
-    ),
-]
-```
-
-#### 6.4.3.2. 根据ID查看特定检查点
-
-获取历史检查点列表后，可以从某个历史快照中取出它的 **`checkpoint_id`**，然后调用 **`graph.get_state()`** 查看该检查点。
-
-**示例如下**
-
-```python
-print('=' * 30, '-> 根据ID查看特定检查点 <-', '=' * 30)
-checkpointe_id = history_checkpoints[3].config["configurable"]["checkpoint_id"]
-print(f"checkpointe_id: {checkpointe_id}")
-
-target_config = {
+      }
+    ]
+  },
+  "next": ["improve_joke"],
+  "config": {
     "configurable": {
-        "thread_id": config["configurable"]["thread_id"],
-        "checkpoint_id": checkpointe_id
+      "thread_id": "joke-thread-1",
+      "checkpoint_ns": "",
+      "checkpoint_id": "1f06833a-2b1c-6a90-8002-8a1e3d4c7f09"
+    }
+  },
+  "metadata": {
+    "source": "loop",
+    "step": 1,
+    "parents": {
+      "": "1f06833a-2b1c-6a90-8001-7f0d2c3b6e08"
+    },
+    "writes": {
+      "generate_joke": {
+        "joke": "Why did the cat cross the road? To get to the other side!",
+        "messages": [
+          {
+            "type": "ai",
+            "content": "Why did the cat cross the road? To get to the other side!"
+          }
+        ]
+      }
+    }
+  },
+  "created_at": "2025-07-24T02:12:26.811234+00:00",
+  "parent_config": {
+    "configurable": {
+      "thread_id": "joke-thread-1",
+      "checkpoint_ns": "",
+      "checkpoint_id": "1f06833a-2b1c-6a90-8001-7f0d2c3b6e08"
+    }
+  },
+  "tasks": [
+    {
+      "id": "task_improve_joke_001",
+      "name": "improve_joke",
+      "path": ["__pregel_pull", "improve_joke"],
+      "error": null,
+      "interrupts": [],
+      "state": null
+    }
+  ],
+  "interrupts": []
+}
+```
+
+
+
+## values
+
+当前检查点的状态值。
+
+
+
+## next
+
+从该检查点继续执行时，下一步将要执行的节点。
+
+
+
+## config
+
+当前检查点配置。常见结构如下：
+
+```json
+{
+    "configurable": {
+        "thread_id": "...",
+        "checkpoint_ns": "...",
+        "checkpoint_id": "..."
     }
 }
-
-specific_history_checkpoint = graph.get_state(config=target_config)
-print(specific_history_checkpoint)
 ```
 
-**运行结果如下**
 
-```json
-============================== -> 根据ID查看特定检查点 <- ==============================
-checkpointe_id: 1f165804-9a90-6db5-bfff-d0eb857db9d8
-StateSnapshot(
-    values={},
-    next=("__start__",),
-    config={
-        "configurable": {
-            "thread_id": "123",
-            "checkpoint_id": "1f165804-9a90-6db5-bfff-d0eb857db9d8",
-        }
-    },
-    metadata={
-        "source": "input",
-        "step": -1,
-        "parents": {},
-    },
-    created_at="2026-06-11T10:28:29.123104+00:00",
-    parent_config=None,
-    tasks=(
-        PregelTask(
-            id="63a24d9c-ea6d-0420-4b5a-b978c6eaeb90",
-            name="__start__",
-            path=("__pregel_pull", "__start__"),
-            error=None,
-            interrupts=(),
-            state=None,
-            result={
-                "topic": "猫咪",
-            },
-        ),
-    ),
-    interrupts=(),
+
+### configurable
+
+用于记录检查点的可配置信息，可能包含用户自定义字段。
+
+
+
+thread_id，checkpoint_ns，checkpoint_id。
+
+这三个字段可以唯一标识一条检查点记录，在大多数检查点存储器实现中，写入检查点后端时都会将它们作为检查点的唯一键。
+
+#### thread_id
+
+会话唯一标识
+
+
+
+#### checkpoint_ns
+
+检查点命名空间。根图的命名空间通常为空字符串 **`""`**；子图会使用非空命名空间。
+
+
+
+#### checkpoint_id
+
+检查点唯一标识
+
+
+
+
+
+## metadata
+
+检查点元数据。
+
+
+
+### step
+
+超步数。
+
+
+
+1. **`step=-1`**
+
+   这是输入检查点，**`metadata["source"] == "input"`**，这表示该检查点是在运行时初始化时被记录的，尚未进入图计算循环。
+
+   此时用户输入还没有真正变成普通业务节点可消费的状态，因此
+
+   ```python
+   values={}
+   ```
+
+   从这个检查点继续执行，下一步是内部启动节点 **`__start__`**，因此：
+
+   ```python
+   next=("__start__",)
+   ```
+
+2. **`step=0`**
+
+   这是图计算循环的第一个检查点，**`metadata["source"] == "loop"`**，这表示检查点是在图计算循环中被写入的。
+
+   此时，**`__start__`** 已经把用户输入写入状态，所以 **`values`** 中已经可以看到状态信息，如下：
+
+   ```python
+   values={
+       "topic": "猫咪"
+   }
+   ```
+
+   此时尚未进入第一个节点，可以理解为处于start节点。
+
+   
+
+3. **`step=1`**
+
+   这是图计算循环的第二个检查点，同样 **`metadata["source"] == "loop"`**。
+
+   同时，它对应第一个执行图节点计算逻辑的超步，即start后的第一个节点。
+
+   此时，**`node_poem`** 和 **`node_joke`** 的输出已经到状态中，因此：
+
+   ```python
+   values={
+       "topic": "猫咪",
+       "poem": "...",
+       "joke": "..."
+   }
+   ```
+
+   从这个检查点开始，下游的汇总节点 **`node_output`** 满足执行条件，因此：
+
+   ```python
+   next=("node_output",)
+   ```
+
+   
+
+   
+
+
+
+## created_at
+
+检查点创建时间。
+
+
+
+
+
+## parent_config
+
+父检查点、即上一个检查点的配置。
+
+```
+"parent_config": {
+    "configurable": {
+      "thread_id": "joke-thread-1",
+      "checkpoint_ns": "",
+      "checkpoint_id": "1f06833a-2b1c-6a90-8001-7f0d2c3b6e08"
+    }
+}
+```
+
+
+
+## tasks
+
+- **`tasks`**：当前检查点关联的待执行任务信息，元素类型通常是 **`PregelTask`**。
+
+  **`tasks`** 通常和 **`next`** 对应，表示从当前检查点继续执行时，下一步将要运行的任务。
+
+  **需要注意的是**，**`tasks`** 中还可能包含这些任务已经成功（**`result`**）或失败（**`error`**）的任务记录，这是在下一个超步执行过程中记录的中间结果。在失败恢复场景中，可以避免重复执行已成功节点。
+
+
+
+**`tasks`** 是一个元组，其中的每个元素都是一个 **`PregelTask`** 实例
+
+**`tasks`** 表示：如果从当前检查点继续执行，下一步要运行哪些任务。比如在 **`step=0`** 的检查点中：
+
+```python
+next=("node_poem", "node_joke")
+tasks=(
+    PregelTask(name="node_poem", ...),
+    PregelTask(name="node_joke", ...),
 )
 ```
 
-当前场景下，我们已经获取了完整检查点列表，然后从中取了某个检查点的 **`checkpoint_id`**，然后调用 **`get_state()`** 查到了它对应的快照。
+这表示从该检查点继续执行时，下一步会运行 **`node_poem`** 和 **`node_joke`** 节点，底层执行的是它们的同名任务。
 
-这看起来有些“绕”，因为我们本来就已经拿到了完整的历史快照。但在实际场景中，这个方法仍然很有意义。
+不过，查看历史检查点时，**`PregelTask`** 实例的 **`result`** 字段可能非空，如：
 
-例如，在后续的 **检查点回溯-分叉** 场景中，我们经常会基于历史检查点创建新的检查点，拿到该检查点的、带有 **`checkpoint_id`** 的配置信息 **`config`**。此时就可以将 **`config`** 传递给 **`graph.get_state()`**，从而便捷而精确地查看该检查点的快照。
+```python
+PregelTask(
+    name="node_poem",
+    result={
+        "poem": "..."
+    }
+)
+```
 
-## 6.5. 使用场景
+这看起来像是“上一个检查点中提前保存了下一个超步的执行结果”。实际上：
 
-### 6.5.1. 多轮对话
+* 完整的检查点（主检查点）是在超步末尾保存的
 
-最基础的使用场景是多轮对话。前文示例已经实现了一个简单的多轮对话流程，这里不再展开。
+* 但在一个超步内部，**`LangGraph`** 还会记录节点级别的计算结果
 
-### 6.5.2. 中断恢复
+* **`checkpoint["id"]`** 会在保存主检查点前由 **`create_checkpoint()`** 推进为新的 **`ID`**，然后用这个 **`ID`** 写入主检查点（假设当前超步为 **`S1`**）。下一轮（超步为 **`S2`**）计算循环中，任务执行完毕后的中间结果会用相同的 **`ID`** 写入。
 
-中断恢复需要结合 **`LangGraph`** 的中断机制理解，见下文。
+  因此，下一轮（超步为 **`S2`**）任务的计算结果绑定到了“当前超步（超步为 **`S1`**）的主检查点”。
+
+* 从检查点后端检索时，会按照 **`checkpoint_id`** 将主检查点和中间结果组织起来
+
+* 因此，检索到的历史检查点列表中，主检查点（超步为 **`S1`**）和下一个超步（超步为 **`S2`**）的中间结果会被放在同一个 **`StateSnapshot`** 中
+
+* 如果同一个超步里有多个并行任务，其中部分任务已经成功，另一个任务失败，那么成功任务的结果可以被保存下来；
+
+* 后续恢复时，**`LangGraph`** 可以复用这些已成功任务的结果，避免重复执行已经成功的节点。
+
+
+
+# 使用场景
+
+## 多轮对话
+
+```
+import os
+from typing import Annotated, Any, TypedDict
+from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.checkpoint.postgres import PostgresSaver
+
+
+# ========== 1. 定义状态 ==========
+class ChatState(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
+
+
+# ========== 2. 初始化 LLM ==========
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    api_key=os.environ.get("OPENAI_API_KEY"),
+)
+
+
+# ========== 3. 定义对话节点 ==========
+def chat_node(state: ChatState) -> dict[str, Any]:
+    """接收用户消息，调用 LLM，返回 AI 回复"""
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+
+
+# ========== 4. 构建图 ==========
+builder = StateGraph(ChatState)
+builder.add_node("chat", chat_node)
+builder.add_edge(START, "chat")
+builder.add_edge("chat", END)
+
+# ========== 5. 编译图，绑定 PostgresSaver 检查点 ==========
+DB_URI = "postgresql://postgres:postgres@localhost:5432/langgraph?sslmode=disable"
+
+with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
+    # 首次使用时执行，自动创建检查点数据表
+    checkpointer.setup()
+
+    graph = builder.compile(checkpointer=checkpointer)
+
+    # ========== 6. 多轮对话 ==========
+    config = {"configurable": {"thread_id": "user-001-chat"}}
+
+    # --- 第一轮 ---
+    result1 = graph.invoke(
+        {"messages": [HumanMessage(content="你好，我叫小明，请记住我的名字。")]},
+        config=config,
+    )
+    print("=== 第一轮 ===")
+    print(f"消息数: {len(result1['messages'])}")
+    print(f"AI 回复: {result1['messages'][-1].content}")
+
+    # --- 第二轮（同一 thread_id，自动恢复上一轮状态）---
+    result2 = graph.invoke(
+        {"messages": [HumanMessage(content="我叫什么名字？")]},
+        config=config,
+    )
+    print("\n=== 第二轮 ===")
+    print(f"消息数: {len(result2['messages'])}")
+    print(f"AI 回复: {result2['messages'][-1].content}")
+
+    # ========== 7. 模拟程序重启后恢复执行 ==========
+    # 关闭当前连接，重新建立连接，模拟进程重启
+    print("\n=== 模拟程序重启 ===")
+
+# 重新创建连接和检查点实例（模拟新进程）
+with PostgresSaver.from_conn_string(DB_URI) as checkpointer2:
+    graph2 = builder.compile(checkpointer=checkpointer2)
+
+    # 用同一个 thread_id 继续对话
+    result3 = graph2.invoke(
+        {"messages": [HumanMessage(content="我之前告诉过你我的名字吗？")]},
+        config=config,
+    )
+    print(f"重启后消息数: {len(result3['messages'])}")
+    print(f"AI 回复: {result3['messages'][-1].content}")
+
+    # ========== 8. 查看完整执行历史 ==========
+    print("\n=== 执行历史 ===")
+    history = list(graph2.get_state_history(config))
+    for i, snapshot in enumerate(history):
+        cid = snapshot.config["configurable"]["checkpoint_id"]
+        step = snapshot.metadata.get("step")
+        next_nodes = snapshot.next
+        msg_count = len(snapshot.values.get("messages", []))
+        print(
+            f"[{i}] checkpoint={cid[:12]}... | step={step} | "
+            f"next={next_nodes} | 消息数={msg_count}"
+        )
+
+    # ========== 9. 断点重放 ==========
+    print("\n=== 从历史检查点重放 ===")
+    # 找到第二轮对话之后的检查点
+    target = None
+    for snap in history:
+        if snap.metadata.get("step") == 2:
+            target = snap
+            break
+
+    if target:
+        print(f"从 step={target.metadata['step']} 重放")
+        print(f"该检查点的消息数: {len(target.values['messages'])}")
+        # 使用该检查点的 config 恢复执行
+        replay_result = graph2.invoke(None, config=target.config)
+        print(f"重放后消息数: {len(replay_result['messages'])}")
+        print(f"重放后 AI 回复: {replay_result['messages'][-1].content}")
+```
+
+
+
+## 中断恢复
+
+```
+import os
+from typing import Annotated, Any, TypedDict
+from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.types import interrupt, Command
+
+
+# ========== 1. 定义状态 ==========
+class ReviewState(TypedDict):
+    topic: str
+    joke: str
+    improved_joke: str
+    approved: bool
+    messages: Annotated[list[BaseMessage], add_messages]
+
+
+# ========== 2. 初始化 LLM ==========
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    api_key=os.environ.get("OPENAI_API_KEY"),
+)
+
+
+# ========== 3. 定义节点 ==========
+def generate_joke(state: ReviewState) -> dict[str, Any]:
+    """生成初始笑话"""
+    response = llm.invoke([
+        HumanMessage(content=f"用一句话讲一个关于{state['topic']}的笑话")
+    ])
+    return {
+        "joke": response.content,
+        "messages": [response],
+    }
+
+
+def review_joke(state: ReviewState) -> dict[str, Any]:
+    """中断点：暂停执行，等待人工审核笑话内容"""
+    # interrupt() 的返回值就是恢复时传入的 resume 值
+    decision = interrupt({
+        "action": "review_joke",
+        "joke": state["joke"],
+        "question": "这条笑话是否合适？请批准或拒绝。",
+    })
+    # 恢复后，decision 是人类传入的审核结果
+    return {"approved": decision}
+
+
+def improve_joke(state: ReviewState) -> dict[str, Any]:
+    """根据审核结果决定是否改进笑话"""
+    if not state.get("approved"):
+        return {
+            "improved_joke": "审核未通过，笑话未修改。",
+            "messages": [HumanMessage(content="[系统] 笑话审核未通过")],
+        }
+
+    response = llm.invoke([
+        HumanMessage(content=f"改进这条笑话，加入双关语：{state['joke']}")
+    ])
+    return {
+        "improved_joke": response.content,
+        "messages": [response],
+    }
+
+
+def reject_joke(state: ReviewState) -> dict[str, Any]:
+    """处理审核拒绝的分支"""
+    return {
+        "improved_joke": "笑话已被拒绝，流程终止。",
+        "messages": [HumanMessage(content="[系统] 笑话被人工审核拒绝")],
+    }
+
+
+# ========== 4. 路由函数 ==========
+def route_after_review(state: ReviewState) -> str:
+    """根据审核结果路由到不同节点"""
+    if state.get("approved"):
+        return "improve_joke"
+    return "reject_joke"
+
+
+# ========== 5. 构建图 ==========
+builder = StateGraph(ReviewState)
+builder.add_node("generate_joke", generate_joke)
+builder.add_node("review_joke", review_joke)
+builder.add_node("improve_joke", improve_joke)
+builder.add_node("reject_joke", reject_joke)
+
+builder.add_edge(START, "generate_joke")
+builder.add_edge("generate_joke", "review_joke")
+builder.add_conditional_edges(
+    "review_joke",
+    route_after_review,
+    {"improve_joke": "improve_joke", "reject_joke": "reject_joke"},
+)
+builder.add_edge("improve_joke", END)
+builder.add_edge("reject_joke", END)
+
+
+# ========== 6. 编译图（绑定 PostgresSaver） ==========
+DB_URI = "postgresql://postgres:postgres@localhost:5432/langgraph?sslmode=disable"
+
+with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
+    checkpointer.setup()
+    graph = builder.compile(checkpointer=checkpointer)
+
+    config = {"configurable": {"thread_id": "review-thread-001"}}
+
+    # ========== 7. 第一次执行：触发中断 ==========
+    print("=== 第一次执行（触发中断） ===")
+    result = graph.invoke({"topic": "程序员"}, config=config)
+
+    # 检查是否发生中断
+    if "__interrupt__" in result:
+        interrupts = result["__interrupt__"]
+        print(f"图已暂停，共 {len(interrupts)} 个中断")
+        for itr in interrupts:
+            print(f"  中断值: {itr.value}")
+            print(f"  中断ID: {itr.id}")
+        print(f"下一步节点: {graph.get_state(config).next}")
+    else:
+        print(f"图已执行完毕: {result}")
+
+    # ========== 8. 查看中断时的状态快照 ==========
+    print("\n=== 中断时的 StateSnapshot ===")
+    snapshot = graph.get_state(config)
+    print(f"next: {snapshot.next}")
+    print(f"values: {snapshot.values}")
+    print(f"tasks: {snapshot.tasks}")
+    print(f"interrupts: {snapshot.interrupts}")
+
+    # ========== 9. 方式一：固定值恢复 ==========
+    print("\n=== 方式一：固定值恢复 ===")
+    result = graph.invoke(Command(resume=True), config=config)
+    print(f"最终结果: {result}")
+    print(f"approved: {result.get('approved')}")
+    print(f"improved_joke: {result.get('improved_joke')}")
+
+    # ========== 10. 方式二：动态值恢复（模拟人工输入） ==========
+    print("\n=== 方式二：动态值恢复（新线程） ===")
+    config2 = {"configurable": {"thread_id": "review-thread-002"}}
+    graph.invoke({"topic": "产品经理"}, config=config2)
+
+    # 模拟人工审核输入
+    human_decision = input("是否批准这条笑话？(yes/no): ").strip().lower()
+    resume_value = human_decision in ("yes", "y", "true", "1")
+
+    result2 = graph.invoke(Command(resume=resume_value), config=config2)
+    print(f"人工审核结果: {resume_value}")
+    print(f"最终状态: {result2.get('improved_joke')}")
+
+    # ========== 11. 查看完整执行历史 ==========
+    print("\n=== 完整执行历史 ===")
+    history = list(graph.get_state_history(config2))
+    for i, snap in enumerate(history):
+        cid = snap.config["configurable"]["checkpoint_id"]
+        step = snap.metadata.get("step")
+        next_nodes = snap.next
+        interrupts = len(snap.interrupts) if snap.interrupts else 0
+        print(
+            f"[{i}] checkpoint={cid[:12]}... | step={step} | "
+            f"next={next_nodes} | interrupts={interrupts}"
+        )
+
+    # ========== 12. 从历史中断点重放 ==========
+    print("\n=== 从历史中断点重放 ===")
+    # 找到发生中断的那个检查点
+    for snap in history:
+        if snap.interrupts:
+            print(f"找到中断检查点: step={snap.metadata['step']}")
+            print(f"中断信息: {snap.interrupts}")
+            # 用不同的决策重放
+            replay_result = graph.invoke(
+                Command(resume=True), config=snap.config
+            )
+            print(f"重放后结果: {replay_result.get('improved_joke')}")
+            break
+```
+
+
 
 ### 6.5.3. 失败后恢复运行
 
@@ -1935,7 +1835,7 @@ print(res)
 
 最终输出中的七言绝句和历史检查点中 **`node_poem.result`** 记录的内容一致，说明 **`node_poem`** 的执行结果被成功复用了。
 
-### 6.5.4. Time Travel
+## 6.5.4. Time Travel
 
 **`Time Travel`** 直译为 **时间旅行**，在当前场景下太过生硬，从技术实现和使用场景来看，译为 **检查点回溯** 更为合理。
 
