@@ -1,6 +1,6 @@
 # 持久化可恢复执行
 
-## 可恢复执行
+可恢复执行基于持久化机制实现。
 
 ```
 普通执行：
@@ -14,39 +14,9 @@
 如果执行到 B 后挂了，恢复时可以从已保存的位置继续。
 ```
 
-所以它关注的不是“数据长期保存”本身，而是：
-
-> **执行过程本身具有可恢复性。**
-
-它关心的是：系统能否记住“任务执行到了哪里、当前状态是什么、接下来应该继续执行什么”，解决的是“执行过程能否恢复”的问题。
 
 
-
-## 持久化机制
-
-> 在图执行过程中，将每个关键阶段的图状态保存为检查点，并按照线程进行组织。
-
-1. **保存什么？**
-
-   保存图在某个时刻的状态快照，也就是 **`Checkpoint`**。
-
-2. **保存到哪里？**
-
-   保存到 **`Checkpointer`** 管理的存储后端中。
-   开发时可以使用基于内存的 **`InMemorySaver`**，生产环境中通常会使用数据库等可靠存储，如 **`PostgresSaver`**。
-
-3. **如何区分不同会话？**
-
-   通过 **`thread_id`** 区分不同的执行线程。
-   同一个 **`thread_id`** 表示同一条持久化执行线，也可以理解为同一个会话。
-
-4. **开发者看到的是什么？**
-
-   开发者通常不会直接操作底层 **`Checkpoint`**，而是通过 **`get_state()`** 和 **`get_state_history()`** 查看 **`Checkpoint`** 的开发者视图 **`StateSnapshot`**。
-
-
-
-## 使用场景
+**使用场景**
 
 从使用场景看，可恢复执行主要支持以下几类能力：
 
@@ -61,7 +31,7 @@
 
 
 
-## 核心组件
+# 核心组件
 
 | 概念                     | 作用                                                         |
 | ------------------------ | ------------------------------------------------------------ |
@@ -80,28 +50,13 @@
 
 
 
-## 6.2. 启用可恢复执行
 
-### 6.2.1. 步骤
 
-启用可恢复执行通常需要两步：
-
-1. 在编译图时传入检查点存储器对象 **`checkpointer`** 
-2. 在调用图时传递带有 **`thread_id`** 的配置对象
-
-底层的持久化机制会按照 **`thread_id`** 将运行时检查点记录在编译时传入的 **`checkpointer`** 中。
-
-### 6.2.2. 检查点实现
+# 检查点存储器
 
 **`LangGraph`** 提供了检查点存储器基类：**`langgraph.checkpoint.base.BaseCheckpointSaver`**
 
-还提供了一系列检查点存储器实现，采用了不同的检查点后端，它们都继承了基类，整体作用是一致的：负责存取检查点，并记录节点执行的中间结果。
-
-可以将 **检查点后端** 理解为：
-
-> 负责保存检查点数据的存储介质。
-
-检查点后端必须基于某个检查点实现，**常见**检查点实现和后端的对应关系如下
+还提供了一系列检查点存储器实现，采用了不同的检查点后端。
 
 | 类名                | 包名                                | 检查点后端              |
 | ------------------- | ----------------------------------- | ----------------------- |
@@ -111,36 +66,57 @@
 | **`MongoDBSaver`**  | **`langgraph-checkpoint-mongodb`**  | **`MongoDB`**           |
 | **`RedisSaver`**    | **`langgraph-checkpoint-redis`**    | **`Redis`**             |
 
-在这些实现中，**`InMemorySaver`** 更适合学习、调试和本地实验；**`SQLite`** 适合轻量级本地持久化；**`PostgreSQL`**、**`MongoDB`**、**`Redis`** 等数据库后端更适合需要跨进程、跨服务保存状态的场景。
+在这些实现中，**`InMemorySaver`** 更适合学习、调试和本地实验；
 
-### 6.2.3. 基于内存的检查点存储器
+**`SQLite`** 适合轻量级本地持久化；
 
-**`LangGraph`** 提供了基于内存的检查点存储器 **`InMemorySaver`**。它将检查点数据保存在当前 **`Python`** 进程的内存中，进程结束则数据丢失，适合快速开发、调试。
+**`PostgreSQL`**、**`MongoDB`**、**`Redis`** 等数据库后端更适合需要跨进程、跨服务保存状态的场景。
 
-在 **`Jupyter`** 场景下，只要 **`Jupyter`** 内核没有被重启，并且 **`InMemorySaver()`** 实例没有被重新创建，内存中的检查点数据就会继续存在。
 
-反之，如果重新执行完整代码，导致 **`checkpointer = InMemorySaver()`** 被重新执行，那么之前保存在内存中的检查点也会被清空。
+
+## InMemorySaver
+
+基于内存的检查点存储器 。
+
+它将检查点数据保存在当前 **`Python`** 进程的内存中，进程结束则数据丢失，适合快速开发、调试。
 
 **示例如下**
 
 ```python
 from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import MessagesState
-from langgraph.checkpoint.memory import InMemorySaver
+from typing import TypedDict,Literal
+from collections.abc import Sequence
 from langchain_deepseek import ChatDeepSeek
 from langchain.messages import HumanMessage
+from langchain.chat_models import init_chat_model
+from langchain_openai import ChatOpenAI
+from langgraph.types import Send
+from langgraph.graph.message import MessagesState
+from langgraph.checkpoint.memory import InMemorySaver
+
+import os
 
 from dotenv import load_dotenv
-load_dotenv(override=True)
 
-model = ChatDeepSeek(
-    model="deepseek-v4-flash",
-    extra_body={
-        "thinking": {
-            "type": "disabled"
-        }
-    }
+load_dotenv()
+
+api_key = os.getenv("OPENAI_API_KEY_ENV")
+model_name = os.getenv("OPENAI_MODEL")  
+base_url = os.getenv("OPENAI_BASE_URL")  
+model_provider = os.getenv("MODEL_PROVIDER")  
+
+
+model = init_chat_model(
+    model=model_name,
+    model_provider=model_provider,
+    api_key=api_key,
+    base_url=base_url,
+    temperature=0,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2
 )
+
 
 class OverAllState(MessagesState):
     output: str
@@ -181,75 +157,86 @@ for msg in res["messages"]:
     msg.pretty_print()
 ```
 
-**输出如下**
+输出
 
 ```
-哎，老王，您这是考我呢？还是今天心情好，想跟我逗个闷子？
-
-您问您是谁——那当然是我的老大哥，老王啊！平时有事儿招呼我，没架子，偶尔还爱指点我两句，我心里都记着。
-
-至于我是谁——我，小王，您的得力助手，机灵踏实，随叫随到。您说往东，我绝不往西，主打一个“靠谱”。
-
-怎么着，老王，是不是又想让我去办啥事儿了？您直说，我听着呢。😎
 ============================== -> 完整消息列表 <- ==============================
 ================================ Human Message =================================
 
 你好，我是老王
 ================================== Ai Message ==================================
 
-你好，老王！很高兴认识你。有什么我可以帮忙的吗？无论是聊天、解答问题还是需要一些建议，我都在这儿呢。😊
+你好，老王！很高兴认识你。你可以叫我Qwen，我是来自阿里云的AI助手。有什么问题或者需要帮助的吗？
 ================================ Human Message =================================
 
 从现在开始，你是小王
 ================================== Ai Message ==================================
 
-好的，老王！我是小王。有啥事儿您尽管吩咐，我这儿随时听候差遣。咱是掏心窝子说话，还是聊点别的？您定！😄
+好的，从现在开始，我就是小王了。很高兴认识你，老王！有什么我可以帮助你的吗？
 ================================ Human Message =================================
 
 我是谁？你是谁？
 ================================== Ai Message ==================================
 
-哎，老王，您这是考我呢？还是今天心情好，想跟我逗个闷子？
-
-您问您是谁——那当然是我的老大哥，老王啊！平时有事儿招呼我，没架子，偶尔还爱指点我两句，我心里都记着。
-
-至于我是谁——我，小王，您的得力助手，机灵踏实，随叫随到。您说往东，我绝不往西，主打一个“靠谱”。
-
-怎么着，老王，是不是又想让我去办啥事儿了？您直说，我听着呢。😎
+你是老王，我们刚刚这样介绍过了。我是小王，你的AI助手，来自阿里云。有什么问题或者需要帮助的吗？
 ```
 
-本例中，三次调用使用了相同的 **`thread_id`**，所以后两次调用能够读取前面已经保存的消息历史。最终模型可以知道“用户是老王”，也可以知道“自己被要求扮演小王”。
 
-需要注意的是，如果重新执行完整代码，**`InMemorySaver()`** 实例会被重新创建，历史检查点会被清空。因此，消息列表不会继续累加，而是会基于新的空状态重新开始。
 
-### 6.2.4. 基于持久化数据库的检查点存储器
+## PostgresSaver
 
-本节将 **`PostgreSQL`** 作为检查点后端，对应的 **`Checkpointer`** 实现为 **`PostgresSaver`**。
+将检查点保存到 **`PostgreSQL`** 数据库中。
 
-和 **`InMemorySaver`** 不同，**`PostgresSaver`** 会将检查点保存到 **`PostgreSQL`** 数据库中。只要数据库中的记录没有被删除，即使 **`Python`** 程序结束、连接对象重建，历史检查点也仍然存在。
+只要数据库中的记录没有被删除，即使 **`Python`** 程序结束、连接对象重建，历史检查点也仍然存在。
 
-在学习 **`LangChain`** 时，我们已经介绍了 **`PostgreSQL`** 的部署和 **`PostgresSaver`** 的用法。此处直接给出案例，不再赘述。
+
+
+**安装**
+
+```
+pip install langgraph-checkpoint-postgres
+```
+
+
 
 **示例如下**
 
 ```python
 from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import MessagesState
-from langgraph.checkpoint.postgres import PostgresSaver
+from typing import TypedDict,Literal
+from collections.abc import Sequence
 from langchain_deepseek import ChatDeepSeek
 from langchain.messages import HumanMessage
+from langchain.chat_models import init_chat_model
+from langchain_openai import ChatOpenAI
+from langgraph.types import Send
+from langgraph.graph.message import MessagesState
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.postgres import PostgresSaver
+
+import os
 
 from dotenv import load_dotenv
-load_dotenv(override=True)
 
-model = ChatDeepSeek(
-    model="deepseek-v4-flash",
-    extra_body={
-        "thinking": {
-            "type": "disabled"
-        }
-    }
+load_dotenv()
+
+api_key = os.getenv("OPENAI_API_KEY_ENV")
+model_name = os.getenv("OPENAI_MODEL")  
+base_url = os.getenv("OPENAI_BASE_URL")  
+model_provider = os.getenv("MODEL_PROVIDER")  
+
+
+model = init_chat_model(
+    model=model_name,
+    model_provider=model_provider,
+    api_key=api_key,
+    base_url=base_url,
+    temperature=0,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2
 )
+
 
 class OverAllState(MessagesState):
     output: str
@@ -294,117 +281,11 @@ with PostgresSaver.from_conn_string(DB_URL) as checkpointer:
         msg.pretty_print()
 ```
 
-**运行结果如下**
 
-```
-好嘞，老王！既然你问了，那我正式回答：  
 
-**你是老王**——我今儿认的“老大哥”，江湖人称“行走的故事书”，爱唠嗑、有阅历，可能还藏着点神秘技能（比如钓鱼从不空军、下棋总赢隔壁老李？）  
 
-**我是小王**——刚上岗的AI小跟班，脑子灵光（但可能偶尔短路），腿脚勤快（指秒回消息），擅长接梗、查资料、瞎琢磨，主打一个“您开口，我跑腿”。  
 
-需要小王帮您办点啥？甭客气！🚀
-============================== -> 完整消息列表 <- ==============================
-================================ Human Message =================================
-
-你好，我是老王
-================================== Ai Message ==================================
-
-老王你好！我是DeepSeek，很高兴认识你。有什么我可以帮忙的吗？无论是聊天、解答问题、还是需要一些建议，尽管开口，我随时在这儿！😊
-================================ Human Message =================================
-
-从现在开始，你是小王
-================================== Ai Message ==================================
-
-好的，老王！从现在开始，我就是小王啦。😄  
-有什么吩咐？无论唠嗑、干活还是出主意，随叫随到！
-================================ Human Message =================================
-
-我是谁？你是谁？
-================================== Ai Message ==================================
-
-好嘞，老王！既然你问了，那我正式回答：  
-
-**你是老王**——我今儿认的“老大哥”，江湖人称“行走的故事书”，爱唠嗑、有阅历，可能还藏着点神秘技能（比如钓鱼从不空军、下棋总赢隔壁老李？）  
-
-**我是小王**——刚上岗的AI小跟班，脑子灵光（但可能偶尔短路），腿脚勤快（指秒回消息），擅长接梗、查资料、瞎琢磨，主打一个“您开口，我跑腿”。  
-
-需要小王帮您办点啥？甭客气！🚀
-```
-
-如果多次运行这段代码，并且始终使用相同的 **`thread_id`**，那么历史消息会不断累加。这是因为检查点已经被保存到了 **`PostgreSQL`** 中，重新创建 **`Python`** 连接对象并不会清空数据库中的历史记录。
-
-再次运行结果如下所示。
-
-```
-（正了正脑门上虚拟工牌，一脸正经）  
-
-**您是老王**——我单方面认证的“茶馆街溜子荣誉会长”，上知股票涨跌，下懂馒头蒸法，口头禅是“这我熟啊！”  
-
-**我是小王**——您的AI影子跟班，刚给自己刻了个电子木鱼，每天默念三遍：  
-“老王说的都对，如果错了……那一定是我听岔了。” 😎
-============================== -> 完整消息列表 <- ==============================
-================================ Human Message =================================
-
-你好，我是老王
-================================== Ai Message ==================================
-
-老王你好！我是DeepSeek，很高兴认识你。有什么我可以帮忙的吗？无论是聊天、解答问题、还是需要一些建议，尽管开口，我随时在这儿！😊
-================================ Human Message =================================
-
-从现在开始，你是小王
-================================== Ai Message ==================================
-
-好的，老王！从现在开始，我就是小王啦。😄  
-有什么吩咐？无论唠嗑、干活还是出主意，随叫随到！
-================================ Human Message =================================
-
-我是谁？你是谁？
-================================== Ai Message ==================================
-
-好嘞，老王！既然你问了，那我正式回答：  
-
-**你是老王**——我今儿认的“老大哥”，江湖人称“行走的故事书”，爱唠嗑、有阅历，可能还藏着点神秘技能（比如钓鱼从不空军、下棋总赢隔壁老李？）  
-
-**我是小王**——刚上岗的AI小跟班，脑子灵光（但可能偶尔短路），腿脚勤快（指秒回消息），擅长接梗、查资料、瞎琢磨，主打一个“您开口，我跑腿”。  
-
-需要小王帮您办点啥？甭客气！🚀
-================================ Human Message =================================
-
-你好，我是老王
-================================== Ai Message ==================================
-
-（拍大腿）哎哟，老王！这声招呼听着就是亲切！今天的茶泡上了没？隔壁李大爷刚还念叨你上回赢他的那盘残局呢——要不咱再研究研究？😏（小王搓手）
-================================ Human Message =================================
-
-从现在开始，你是小王
-================================== Ai Message ==================================
-
-（立正站好，手机屏闪了闪）得嘞，老王！小王这回把工牌焊脑门上了，您掀个眼皮瞅瞅——  
-（工牌晃晃悠悠浮出电子光字：「小王·AI茶馆分部·随叫随到版」）  
-
-有事您敲桌沿，三秒内准给您接话茬儿！ 🫖
-================================ Human Message =================================
-
-我是谁？你是谁？
-================================== Ai Message ==================================
-
-（正了正脑门上虚拟工牌，一脸正经）  
-
-**您是老王**——我单方面认证的“茶馆街溜子荣誉会长”，上知股票涨跌，下懂馒头蒸法，口头禅是“这我熟啊！”  
-
-**我是小王**——您的AI影子跟班，刚给自己刻了个电子木鱼，每天默念三遍：  
-“老王说的都对，如果错了……那一定是我听岔了。” 😎
-```
-
-因此，**`PostgresSaver`** 和 **`InMemorySaver`** 的关键区别在于：
-
-* **`InMemorySaver`**：状态保存在当前进程内存中，进程结束或对象重建后丢失。
-* **`PostgresSaver`**：状态保存在 **`PostgreSQL`** 中，只要数据库记录存在，程序重启后仍可读取。
-
-所以，基于数据库的 **`Checkpointer`** 可靠性更高、更适合需要长期保存会话状态的场景。
-
-## 6.3. 持久化模式
+# 持久化模式
 
 ### 6.3.1. 概述
 
