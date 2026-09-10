@@ -977,8 +977,6 @@ print(word_counts)
 
 
 
-
-
 # draw_mermaid
 
 获取对应的mermaid图表示。
