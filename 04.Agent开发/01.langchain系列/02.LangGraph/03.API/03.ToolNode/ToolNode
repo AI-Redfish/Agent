@@ -217,6 +217,725 @@ result = graph.invoke(
 
 
 
+# 节点容错
+
+节点执行失败时，如果未做任何处理，可能导致整个运行图执行失败。为了提升运行图的稳定性，处理临时故障、超时、异常恢复以及重
+
+复计算等问题，**`LangGraph`** 提供了一系列节点执行与容错机制：重试、超时设置、异常处理和节点缓存。对应关系如下。
+
+| 问题/场景    | 对应机制                    | 机制类型             | 说明                                                         |
+| ------------ | --------------------------- | -------------------- | ------------------------------------------------------------ |
+| **临时故障** | **重试 Retry**              | **节点容错机制**     | 网络抖动、接口偶发失败、模型服务短暂不可用，可以通过重试机制再次执行节点。 |
+| **超时**     | **超时设置 Timeout**        | **节点容错机制**     | 某个节点执行时间过长，可以通过超时限制避免图运行被长时间阻塞。 |
+| **异常恢复** | **异常处理 Error Handling** | **节点容错机制**     | 节点抛出异常后，通过异常捕获、兜底逻辑、降级返回、路由到错误处理节点等方式恢复流程。 |
+| **重复计算** | **缓存 Cache**              | **节点执行优化机制** | 相同输入反复触发耗时节点，可以通过节点缓存避免重复执行，提高性能。 |
+
+
+
+**`LangGraph`** 提供了三种异常处理机制
+
+- **`retries`**：重试机制。节点执行失败时，根据重试策略自动重新执行。
+- **`Timeouts`**：超时控制。限制单次节点执行的最大等待时间。
+- **`Error Handling`**：错误处理。重试次数耗尽后，执行特定的异常处理逻辑。
+
+
+
+三者的执行顺序如下：
+
+1. 节点开始执行。
+2. 如果节点执行超时或抛出异常，本次节点尝试失败。
+3. 重试策略 **`RetryPolicy`** 判断该异常是否需要重试。
+4. 如果满足重试条件，并且尚未达到最大尝试次数，则重新执行节点。
+5. 如果重试次数耗尽，节点仍然失败，则进入 **`error_handler`** 错误处理逻辑。
+6. 如果没有配置错误处理逻辑，则异常继续向外抛出，可能导致整个图运行失败。
+
+
+
+## 重试
+
+### 基本使用
+
+重试机制用于处理临时性异常，例如网络抖动、远程服务短暂不可用、API 偶发失败等。
+
+在添加节点时，可以通过 **`retry_policy=`** 配置节点的重试策略。
+
+**示例如下**
+
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import RetryPolicy
+
+from requests.exceptions import HTTPError
+from loguru import logger
+
+class EmptyState(TypedDict):
+    pass
+
+def node_a(state: EmptyState) -> EmptyState:
+    logger.info(f"node a 运行")
+    raise HTTPError("网络连接超时...")
+
+builder = StateGraph(state_schema=EmptyState)
+builder.add_node(
+    "node_a",
+    node_a,
+    retry_policy=RetryPolicy(
+        max_attempts=3,
+        jitter=False
+    )
+)
+builder.add_edge(START, "node_a")
+builder.add_edge("node_a", END)
+
+graph = builder.compile()
+
+try:
+    graph.invoke({})
+except HTTPError as e:
+    logger.info("重试次数耗尽: {}", e)
+
+from IPython.display import display
+display(graph)
+```
+
+**输出如下**
+
+```
+2026-06-01 16:44:56.684 | INFO     | __main__:node_a:12 - node a 运行
+2026-06-01 16:44:57.185 | INFO     | __main__:node_a:12 - node a 运行
+2026-06-01 16:44:58.186 | INFO     | __main__:node_a:12 - node a 运行
+2026-06-01 16:44:58.187 | INFO     | __main__:<module>:32 - 重试次数耗尽: 网络连接超时...
+```
+
+![image-20260601164518909](D:\develop\GitNote\Redfish-AI\Agent\04.Agent开发\01.langchain系列\02.LangGraph\课件\assets\image-20260601164518909.png)
+
+
+
+### max_attempts
+
+**`max_attempts`** 表示最大尝试次数，包括首次执行。
+
+例如：
+
+```python
+RetryPolicy(max_attempts=3)
+```
+
+表示：
+
+```text
+第 1 次：首次执行
+第 2 次：第 1 次重试
+第 3 次：第 2 次重试
+```
+
+如果第 3 次仍然失败，则不再继续重试。
+
+
+
+### initial_interval
+
+**`initial_interval`** 表示第一次重试前的等待时间，单位为秒。
+
+默认值：0.5
+
+
+
+例如：
+
+```python
+RetryPolicy(initial_interval=0.5)
+```
+
+表示首次失败后，等待 **`0.5s`** 再进行第一次重试。
+
+
+
+### backoff_factor
+
+**`backoff_factor`** 表示重试间隔的增长倍数。
+
+默认值：2.0。
+
+默认情况下，**`RetryPolicy`** 使用指数退避策略：
+
+```text
+第一次失败后：等待 initial_interval
+第二次失败后：等待 initial_interval * backoff_factor
+第三次失败后：继续乘以 backoff_factor
+```
+
+例如：
+
+```python
+RetryPolicy(
+    initial_interval=0.5,
+    backoff_factor=2.0
+)
+```
+
+等待时间大致为：
+
+```text
+0.5s -> 1.0s -> 2.0s -> 4.0s ...
+```
+
+
+
+### max_interval
+
+**`max_interval`** 表示相邻两次重试之间的最大等待时间。
+
+即使指数退避计算出的等待时间继续增长，也不会超过 **`max_interval`**。
+
+例如：
+
+```python
+RetryPolicy(
+    initial_interval=1,
+    backoff_factor=2,
+    max_interval=5
+)
+```
+
+等待时间大致为：
+
+```text
+1s -> 2s -> 4s -> 5s -> 5s ...
+```
+
+
+
+### jitter
+
+**`jitter`** 表示是否为重试间隔添加随机抖动（添加随机数，可正可负）。
+
+在并发场景中，如果大量任务同时失败，并且按照固定间隔同时重试，可能导致服务在某个时间点被大量请求打爆。
+
+加入 **`jitter`** 后，不同任务的重试时间会被打散，从而降低瞬时流量峰值。
+
+上述案例中，为了让日志时间更稳定，观察指数退避策略，所以设置了：
+
+```python
+RetryPolicy(jitter=False)
+```
+
+如果是生产环境，通常建议保留默认值：
+
+```python
+RetryPolicy(jitter=True)
+```
+
+
+
+### retry_on
+
+**`retry_on`** 用于设置哪些异常需要触发重试。
+
+它支持三种写法：
+
+**写法一：指定单个异常类型**
+
+```python
+RetryPolicy(retry_on=HTTPError)
+```
+
+表示只有抛出 **`HTTPError`** 时才重试。
+
+**写法二：指定多个异常类型**
+
+```python
+RetryPolicy(
+    retry_on=(HTTPError, ConnectionError)
+)
+```
+
+表示抛出 **`HTTPError`** 或 **`ConnectionError`** 时触发重试。
+
+**写法三：自定义判断函数**
+
+```python
+def should_retry(exc: Exception) -> bool:
+    return isinstance(exc, HTTPError)
+
+RetryPolicy(retry_on=should_retry)
+```
+
+这种写法最灵活。
+
+**`should_retry`** 接收一个异常实例，返回一个布尔值：
+
+* 返回 **`True`**：表示该异常需要重试。
+* 返回 **`False`**：表示该异常不需要重试。
+
+
+
+**默认重试条件**
+
+**`retry_on`** 的默认值为 **`default_retry_on`**。
+
+**`default_retry_on`** 是一个可调用对象，它接收一个 **`Exception`** 实例，并返回一个 **`bool`** 值：
+
+```text
+True  -> 需要重试
+False -> 不需要重试
+```
+
+默认情况下，**`default_retry_on`** 会对大多数异常进行重试，但以下异常及其子类通常不会触发重试：
+
+* **`ValueError`**
+* **`TypeError`**
+* **`ArithmeticError`**
+* **`ImportError`**
+* **`LookupError`**
+* **`NameError`**
+* **`SyntaxError`**
+* **`RuntimeError`**
+* **`ReferenceError`**
+* **`StopIteration`**
+* **`StopAsyncIteration`**
+* **`OSError`**
+
+这些异常通常更像是代码逻辑错误、类型错误、语法错误或运行时错误，单纯重试通常没有意义。
+
+对于主流 **`HTTP`** 库中的异常，例如 **`requests`** 和 **`httpx`**，默认策略通常只对 **`5xx`** 状态码进行重试。
+
+原因是：
+
+* **`4xx`** 通常表示客户端请求错误，例如参数错误、鉴权失败、资源不存在等。
+* **`5xx`** 通常表示服务端异常，例如服务暂时不可用、网关错误、内部服务错误等。
+
+因此，**`5xx`** 更适合通过重试进行恢复。
+
+**`default_retry_on`** 的核心逻辑如下：
+
+```python
+def default_retry_on(exc: Exception) -> bool:
+    import httpx
+    import requests
+
+    if isinstance(exc, ConnectionError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return 500 <= exc.response.status_code < 600
+    if isinstance(exc, requests.HTTPError):
+        return 500 <= exc.response.status_code < 600 if exc.response else True
+    if isinstance(
+        exc,
+        (
+            ValueError,
+            TypeError,
+            ArithmeticError,
+            ImportError,
+            LookupError,
+            NameError,
+            SyntaxError,
+            RuntimeError,
+            ReferenceError,
+            StopIteration,
+            StopAsyncIteration,
+            OSError,
+        ),
+    ):
+        return False
+    return True
+```
+
+
+
+## 超时-待研究
+
+
+
+超时控制用于限制单次节点执行的最大耗时，避免某个节点因为外部服务无响应、网络阻塞或异步任务卡住而长时间不返回。
+
+运行时长超过超时时间，节点运行失败，并抛出超时异常。
+
+
+
+**节点类型要求**
+
+节点级超时控制仅适用于异步节点，即使用 **`async def`** 定义的节点。
+
+同步节点一旦开始执行，通常会阻塞当前线程。**`Python`** 进程内缺少一种通用、安全的机制，可以从外部强行终止正在运行的同步函数；如果强行中断，可能导致资源未释放、锁未释放或副作用处于不一致状态。因此，**`LangGraph `** 的节点级超时更适合用于异步节点。对于同步节点，应优先在节点内部使用具体库提供的超时参数，例如 **`HTTP `** 客户端、数据库驱动或 **`SDK`** 自带的 **`timeout`** 配置。
+
+
+
+**案例**
+
+```python
+from langgraph.types import TimeoutPolicy
+
+builder.add_node(
+    "call_model",
+    call_model,
+    timeout=TimeoutPolicy(run_timeout=60)
+)
+```
+
+这里的含义是：
+
+* **`call_model`** 节点单次执行最多运行 60 秒。
+* 如果超过 60 秒仍未完成，则触发超时。
+* 超时后会抛出 **`NodeTimeoutError`**。
+* 该异常会交给 **`RetryPolicy`** 判断是否需要重试。
+* 如果重试次数耗尽，才会进入错误处理逻辑。
+
+
+
+
+
+**`TimeoutPolicy`** 
+
+常见参数包括：
+
+| 参数               | 描述                                                         |
+| :----------------- | :----------------------------------------------------------- |
+| **`run_timeout`**  | 超时时间，即单次节点运行的最长时间                           |
+| **`idle_timeout`** | 节点没有可观察进展（如写状态、流式输出等）时的最长空闲时间   |
+| **`refresh_on`**   | 空闲时间的刷新方式，可以是手动刷新或自动刷新。默认为自动刷新，此时写状态、流式输出等都会刷新 |
+
+> 
+
+## 错误处理
+
+错误处理机制用于在节点最终失败后，执行兜底逻辑。
+
+节点执行失败时，整体顺序如下：
+
+```text
+节点执行失败
+    ↓
+是否满足 retry_policy
+    ↓
+满足则继续重试，直到重试次数耗尽，否则直接进行下一步
+    ↓
+进入 error_handler
+    ↓
+执行兜底恢复逻辑
+```
+
+在 **`add_node`** 中通过 **`error_handler=`** 设置错误处理逻辑。
+
+例如：
+
+```python
+builder.add_node(
+    "call_api",
+    call_api,
+    retry_policy=RetryPolicy(max_attempts=3),
+    error_handler=handle_api_error
+)
+```
+
+**`handle_api_error`** 可以返回状态更新，也可以通过 **`Command`** 路由到其他节点。
+
+错误处理适合以下场景：
+
+* API 调用失败后返回兜底结果。
+* 远程服务失败后切换到备用服务。
+* 多步骤业务流程中执行补偿逻辑。
+* 不希望整个图因为单个节点失败而直接终止。
+
+
+
+# 节点缓存
+
+将节点的历史运行结果保存下来，后续当节点收到相同输入时，不再重复执行节点函数，而是直接返回之前缓存的结果。
+
+主要用于减少重复计算，降低延迟和成本。
+
+
+
+例如，某个节点内部需要：
+
+* 调用大模型
+* 调用外部 API
+* 查询远程数据库
+* 执行复杂计算
+* 进行耗时的数据处理
+
+如果相同输入会多次出现，那么可以考虑启用节点缓存。
+
+
+
+## **适用场景**
+
+节点缓存通常适用于同时满足以下条件的场景：
+
+**节点函数具有确定性**
+
+相同输入应当产生相同输出。
+
+例如：
+
+```text
+输入 A -> 输出 B
+再次输入 A -> 仍然输出 B
+```
+
+
+
+**节点执行成本较高**
+
+例如大模型调用、API 请求、复杂计算、耗时查询等。
+
+
+
+**相同输入会重复出现**
+
+例如多次调试图、重复执行相同流程、多个分支复用同一中间结果等。
+
+
+
+**输入能够被缓存键函数稳定处理**
+
+缓存是以 键值对 形式存储的，每个缓存都有唯一的 Key，缓存键函数 用于生成唯一键。
+
+默认情况下，CachePolicy使用 default_cache_key 作为缓存键函数。后者基于节点输入调用 pickle 库的序列化功能生成缓存唯
+
+**一键**。
+
+
+
+使用默认缓存键函数时，建议输入尽量使用简单、稳定、可序列化的数据结构，例如：
+
+* str
+* int
+* float
+* bool
+* dict
+* list
+* tuple
+
+如果节点输入中包含复杂对象、文件句柄、数据库连接、模型实例、动态对象等，建议自定义 **`key_func`**，避免缓存 **`Key`** 不稳定或无法
+
+生成。
+
+
+
+## 基本用法
+
+**第一步：为节点配置 `cache_policy`**
+
+```python
+builder.add_node(
+    "node_a",
+    node_a,
+    cache_policy=CachePolicy(ttl=10)
+)
+```
+
+
+
+**第二步：编译图时启用缓存后端**
+
+仅仅为节点配置 **`cache_policy`** 还不够，还需要在编译图时指定缓存后端。
+
+例如：
+
+```python
+graph = builder.compile(cache=InMemoryCache())
+```
+
+其中：
+
+* **`CachePolicy`**：声明节点是否启用缓存，以及缓存策略是什么。
+* **`InMemoryCache`**：声明缓存数据实际保存在哪里。
+
+如果只配置 **`cache_policy`**，但编译图时没有传入 **`cache=`**，缓存不会真正生效。
+
+
+
+**示例如下**
+
+```python
+import time
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END
+from langgraph.cache.memory import InMemoryCache
+from langgraph.types import CachePolicy
+
+from operator import add
+from loguru import logger
+
+class EmptyState(TypedDict):
+    user: str
+    invoke_counts: Annotated[int, add]
+
+def node_a(state: EmptyState) -> EmptyState:
+    logger.info("node_a 被调用, user: {}", state["user"])
+    time.sleep(3) # 模拟耗时操作
+    logger.info("node_a 耗时操作执行完毕")
+
+    return {
+        "invoke_counts": 1
+    }
+
+builder = StateGraph(state_schema=EmptyState)
+builder.add_node(
+    "node_a",
+    node_a,
+    cache_policy=CachePolicy(ttl=10)
+)
+builder.add_edge(START, "node_a")
+builder.add_edge("node_a", END)
+
+graph = builder.compile(cache=InMemoryCache())
+logger.info("首次调用图")
+logger.info("运行结果: {}\n\n", graph.invoke({"user": "小明", "invoke_counts": 0}))
+logger.info("相同输入再次调用图")
+logger.info("运行结果: {}\n\n", graph.invoke({"user": "小明", "invoke_counts": 0}))
+logger.info("不同输入再次调用图")
+logger.info("运行结果: {}\n\n", graph.invoke({"user": "小花", "invoke_counts": 0}))
+logger.info("不同输入再次调用图")
+logger.info("运行结果: {}\n\n", graph.invoke({"user": "小花", "invoke_counts": 2}))
+time.sleep(10) # 确保第一次调用缓存失效
+logger.info("10秒后相同输入再次调用图，此时缓存已失效")
+logger.info("运行结果: {}", graph.invoke({"user": "小明", "invoke_counts": 0}))
+
+from IPython.display import display
+display(graph)
+```
+
+运行日志如下
+
+```
+2026-06-01 18:46:22.959 | INFO     | __main__:<module>:33 - 首次调用图
+2026-06-01 18:46:22.960 | INFO     | __main__:node_a:15 - node_a 被调用, user: 小明
+2026-06-01 18:46:25.962 | INFO     | __main__:node_a:17 - node_a 耗时操作执行完毕
+2026-06-01 18:46:25.963 | INFO     | __main__:<module>:34 - 运行结果: {'user': '小明', 'invoke_counts': 1}
+
+
+2026-06-01 18:46:25.964 | INFO     | __main__:<module>:35 - 相同输入再次调用图
+2026-06-01 18:46:25.965 | INFO     | __main__:<module>:36 - 运行结果: {'user': '小明', 'invoke_counts': 1}
+
+
+2026-06-01 18:46:25.966 | INFO     | __main__:<module>:37 - 不同输入再次调用图
+2026-06-01 18:46:25.967 | INFO     | __main__:node_a:15 - node_a 被调用, user: 小花
+2026-06-01 18:46:28.968 | INFO     | __main__:node_a:17 - node_a 耗时操作执行完毕
+2026-06-01 18:46:28.970 | INFO     | __main__:<module>:38 - 运行结果: {'user': '小花', 'invoke_counts': 1}
+
+
+2026-06-01 18:46:28.970 | INFO     | __main__:<module>:39 - 不同输入再次调用图
+2026-06-01 18:46:28.971 | INFO     | __main__:node_a:15 - node_a 被调用, user: 小花
+2026-06-01 18:46:31.973 | INFO     | __main__:node_a:17 - node_a 耗时操作执行完毕
+2026-06-01 18:46:31.974 | INFO     | __main__:<module>:40 - 运行结果: {'user': '小花', 'invoke_counts': 3}
+
+
+2026-06-01 18:46:36.976 | INFO     | __main__:<module>:42 - 11秒后相同输入再次调用图，此时缓存已失效
+2026-06-01 18:46:36.977 | INFO     | __main__:node_a:15 - node_a 被调用, user: 小明
+2026-06-01 18:46:39.979 | INFO     | __main__:node_a:17 - node_a 耗时操作执行完毕
+2026-06-01 18:46:39.981 | INFO     | __main__:<module>:43 - 运行结果: {'user': '小明', 'invoke_counts': 1}
+```
+
+
+
+## 缓存策略
+
+缓存策略通过 **`CachePolicy`** 配置，只有两个配置项
+
+| 参数           | 描述                                  |
+| :------------- | :------------------------------------ |
+| **`key_func`** | 根据节点输入生成缓存 **`Key`** 的函数 |
+| **`ttl`**      | 缓存键值对的存活时间，单位为秒        |
+
+
+
+### key_func
+
+**`key_func`** 用于根据节点输入生成唯一的缓存 Key。
+
+节点缓存本质上是一个 **`K-V`** 缓存：
+
+```text
+缓存 Key -> 节点运行结果
+```
+
+当节点再次执行时，LangGraph 会先根据当前输入计算缓存 Key：
+
+* 如果缓存 Key 已存在，并且没有过期，则直接返回缓存结果。
+* 如果缓存 Key 不存在，或者已经过期，则正常执行节点函数，并将结果写入缓存。
+
+默认缓存键函数是 **`default_cache_key`**。
+
+其核心实现如下：
+
+```python
+def default_cache_key(*args: Any, **kwargs: Any) -> str | bytes:
+    """Default cache key function that uses the arguments and keyword arguments to generate a hashable key."""
+    import pickle
+
+    # protocol 5 strikes a good balance between speed and size
+    return pickle.dumps((_freeze(args), _freeze(kwargs)), protocol=5, fix_imports=False)
+```
+
+它会把节点输入参数经过处理后，使用 **`pickle`** 序列化为字节序列，并将后者作为缓存 **`Key`**。
+
+
+
+### ttl
+
+**`ttl`** 表示缓存的存活时间，单位为秒。
+
+例如：
+
+```python
+CachePolicy(ttl=10)
+```
+
+表示缓存结果最多保存 10 秒。
+
+如果设置为：
+
+```python
+CachePolicy(ttl=None)
+```
+
+表示缓存不会因为时间原因自动过期。
+
+不过在实际项目中，不建议随意设置永久缓存。
+
+
+
+# 全图默认配置
+
+当多个节点都需要配置相同的执行策略时，如果每个节点都重复配置，繁琐且耗时。
+
+例如：
+
+```python
+builder.add_node(
+    "node_a",
+    node_a,
+    retry_policy=RetryPolicy(max_attempts=3)
+)
+
+builder.add_node(
+    "node_b",
+    node_b,
+    retry_policy=RetryPolicy(max_attempts=3)
+)
+
+builder.add_node(
+    "node_c",
+    node_c,
+    retry_policy=RetryPolicy(max_attempts=3)
+)
+```
+
+在较新版本中，可以通过 **`set_node_defaults`** 为所有节点设置默认配置，即**全图默认配置 `Graph defaults`**。
+
+默认配置可以包括：
+
+* **`retry_policy`**
+* **`timeout`**
+* **`error_handler`**
+* **`cache_policy`**
+
+
+
 
 
 
