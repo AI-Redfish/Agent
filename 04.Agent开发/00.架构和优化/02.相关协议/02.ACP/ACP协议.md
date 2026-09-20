@@ -265,6 +265,10 @@ ACP 协议没有定义独立的 skill 对象。Agent 侧的技能 / 自定义命
 | 审批 | 弹窗并记录用户决策 | 发起 `request_permission` | — |
 | 展示 | 渲染消息 / 工具调用 / 计划 | 流式上报 `session/update` | — |
 
+tool,mcp,skill具体放在哪一段决定于架构,ACP都支持,无非就是加载来源不同.
+
+决策层都在agent侧.
+
 # 整体链路
 
 以"修复 bug 并跑测试"为例，一次完整交互：
@@ -310,40 +314,13 @@ Client 渲染最终结果 → 用户
 - 原生支持 ACP 的 Agent：Gemini CLI、Goose 等；
 - 通过适配器接入：Claude Code（claude-code-acp 适配器）等。
 
-## 与 LSP 对比
 
-| 维度 | LSP | ACP |
-| --- | --- | --- |
-| 连接对象 | 编辑器 ↔ 语言服务器 | 编辑器 ↔ 编码 Agent |
-| 传输 | stdio / socket，JSON-RPC | stdio，JSON-RPC（每行一条） |
-| 解决的问题 | 代码智能（补全、跳转、诊断） | Agent 交互（对话、工具、审批） |
-| 集成复杂度 | M×N → M+N | M×N → M+N |
 
-## 与 MCP / A2A 的关系
 
-| 协议 | 连接对象 | 解决的问题 | 发起方 |
-| --- | --- | --- | --- |
-| MCP | Agent ↔ 工具/资源/数据 | 给 Agent 接入上下文和工具 | Anthropic |
-| A2A | Agent ↔ Agent | 跨 Agent 能力发现与任务委托 | Google |
-| **ACP** | **客户端 ↔ Agent** | **编辑器/UI 如何发现并驱动 Agent 进程** | Zed |
 
-三者互补：MCP 连工具，A2A 连别的 Agent，ACP 连用户面前的客户端。
 
-# 简化记忆
 
-```text
-ACP = Agent Client Protocol（Zed，agentclientprotocol.com）
 
-定位   ->  编辑器/客户端/UI 如何发现并通信 Agent 进程
-类比   ->  LSP 之于语言服务器 = ACP 之于编码 Agent
-角色   ->  Client（UI/信任边界） + Agent（子进程，负责智能）
-传输   ->  stdio + JSON-RPC 2.0，每行一条消息
-握手   ->  initialize：协商版本、交换能力
-会话   ->  session/new / session/load / session/prompt
-更新   ->  session/update：消息块/思考块/工具调用/计划
-审批   ->  session/request_permission：放行权在客户端
-代管   ->  fs/* 读文件、terminal/* 跑命令，经客户端执行
-分工   ->  内置工具 Agent 执行，fs/terminal 客户端执行，MCP 工具 Server 执行
-技能   ->  Agent 广播 available_commands，Client 只展示，执行仍在 Agent
-价值   ->  M×N 集成降为 M+N
-```
+
+
+
