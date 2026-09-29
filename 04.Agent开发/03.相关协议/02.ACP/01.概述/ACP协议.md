@@ -306,13 +306,7 @@ Client 渲染最终结果 → 用户
 
 一句话总结：**决策与编排永远在 Agent；执行分散在 Agent（内置工具、MCP 调用）、Client（fs / terminal 代管）、MCP Server（工具本体）三处；审批与展示永远在 Client。**
 
-# 生态与对比
 
-## 当前生态
-
-- 客户端：Zed（首个实现）等编辑器 / UI 集成方；
-- 原生支持 ACP 的 Agent：Gemini CLI、Goose 等；
-- 通过适配器接入：Claude Code（claude-code-acp 适配器）等。
 
 
 
