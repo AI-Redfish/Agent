@@ -2,11 +2,21 @@
 
 python中最推荐的框架是agent-client-protocol。
 
-- PyPI 包名：`agent-client-protocol`，**导入名是 `acp`**（不是 `agent_client_protocol`）；
-- 仓库：https://github.com/agentclientprotocol/python-sdk ，文档：https://agentclientprotocol.github.io/python-sdk/ ；
-- 由社区维护、被 ACP 官网列为推荐 Python SDK（kimi-cli 等项目在用）；
-- 纯 asyncio + Pydantic v2 实现，Python 3.10 ~ 3.14；
-- 版本跟随上游 ACP schema 演进（本文基于 **0.12.1，对应 schema v1.19.0，PROTOCOL_VERSION = 1**），API 变化较快，升级时注意对照 CHANGELOG。
+由社区维护、被 ACP 官网列为推荐 Python SDK（kimi-cli 等项目在用）。
+
+
+
+**仓库**
+
+https://github.com/agentclientprotocol/python-sdk 
+
+
+
+**文档**
+
+https://agentclientprotocol.github.io/python-sdk/ ；
+
+
 
 它把协议两侧都做成了可直接继承的基类，两个方向都能写：
 
@@ -15,9 +25,9 @@ python中最推荐的框架是agent-client-protocol。
 | 写一个 Agent，被 Zed 等客户端使用 | `acp.Agent` | `asyncio.run(run_agent(agent))` |
 | 写一个 Client，程序化驱动任意 ACP Agent | `acp.Client` | `spawn_agent_process(client, cmd, *args)` |
 
-# 快速上手：五分钟跑通一个 Echo Agent
+# 快速上手
 
-## 1. 安装
+**安装**
 
 ```bash
 pip install agent-client-protocol
@@ -27,7 +37,9 @@ uv add agent-client-protocol
 
 可选附加依赖：`pip install "agent-client-protocol[http]"`（httpx + websockets，启用 HTTP/WebSocket 传输）。
 
-## 2. 最小 Agent（30 行）
+
+
+**最小 Agent**
 
 ```python
 # echo_agent.py
@@ -61,7 +73,9 @@ asyncio.run(run_agent(EchoAgent()))
 
 三个核心方法对应协议三个请求：`initialize` / `session/new` / `session/prompt`。`Agent` 是 `typing.Protocol`，鸭子类型即可，不强制继承。
 
-## 3. 接入 Zed 验证
+
+
+**接入 Zed 验证**
 
 把 agent 注册到 Zed 的 `agents.json`（Linux/macOS：`~/.config/zed/agents.json`；Windows：`%APPDATA%\Zed\agents.json`）：
 
@@ -80,7 +94,9 @@ asyncio.run(run_agent(EchoAgent()))
 
 重启 Zed → 打开 Agent Panel → 选择 Echo → 发消息，能收到回显即跑通。
 
-## 4. 不开编辑器，命令行直接测
+
+
+**命令验证**
 
 agent 就是「读 stdin、写 stdout」的 JSON-RPC 进程，可以手工喂一行请求：
 
@@ -89,6 +105,97 @@ echo '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":
 ```
 
 stdout 返回一行 JSON 响应即正常（进程会继续等输入，Ctrl+C 退出）。
+
+
+
+# 生命周期：进程、会话与历史恢复（以 Zed 为例）
+
+最容易误解的一点：**连接（进程）与 会话是两个独立的生命周期**——`initialize` 跟着进程走，`session/new` 跟着对话走。
+
+## 时间线
+
+```text
+Zed 启动 ──(不启动任何 agent 进程)
+   │
+   ├─ 在 Agent Panel 选中 Echo、创建新对话
+   │     ▼
+   │  spawn `python echo_agent.py` 子进程      ← 进程诞生
+   │     ▼
+   │  initialize()        ← 每个进程只调一次（握手）
+   │     ▼
+   │  new_session()       ← 每个对话调一次，得到 session_id
+   │     ▼
+   │  prompt()            ← 每轮消息调一次
+   │
+   ├─ 又开了第 2、3 个 Echo 对话
+   │     → 不再 spawn 新进程、不再 initialize
+   │     → 只对同一进程发 new_session()（复用进程，靠 session_id 区分）
+   │
+   └─ Zed 退出 / 进程崩溃
+         → 下次使用时重新 spawn → 重新 initialize
+```
+
+要点：
+
+- `initialize` 是**每进程一次**，不是每条消息、也不是每个对话一次；
+- Zed 对 `agents.json` 里每个条目维持**一个**运行中的进程实例，多个对话共享它——这正是最小 Agent 里 `NewSessionResponse(session_id="s1")` 注释"真实项目用 uuid"的原因：同一进程里多个会话都返回 `s1`，`prompt(session_id, ...)` 会路由错乱。
+
+## 重载历史会话会重启进程吗
+
+分两种情况：
+
+| 场景 | 是否重启进程 | 行为 |
+| --- | --- | --- |
+| Echo 进程还活着（切走再切回、Zed 未关） | ❌ | 不重启、不重新 initialize；Zed 从本地数据库渲染 UI 历史；thread 在当前进程里还有活的 session_id 就继续复用，后续 `prompt` 直接发过去 |
+| 进程已不在（Zed 重启过、进程崩溃/被关闭） | ✅ | 重新打开该历史会话并继续交互时，重新 spawn 新进程 → 重新 `initialize`；新进程内存里没有任何旧会话状态 |
+
+## 历史上下文去哪了：loadSession 能力
+
+ACP 里**会话的持久化责任在客户端**：Zed 把对话记录存在自己本地（UI 层 transcript），agent 进程里的会话只是内存态。进程重启后，旧上下文能否"恢复进 agent"，取决于 `initialize` 响应中声明的能力：
+
+| agent 声明 | Zed 打开历史会话时的行为 |
+| --- | --- |
+| `capabilities.loadSession = true` | 调用 `session/load`，把 Zed 保存的完整 transcript（历史 user/assistant 消息、工具调用记录）**回放给 agent**，agent 在新进程里重建上下文，后续对话无缝继续 |
+| 未声明（如最小 EchoAgent） | 只能调用 `session/new` 开**全新会话**：历史消息只是 Zed 本地存的 UI 记录，agent 侧完全不知道之前聊了什么 |
+
+SDK 侧对应 `Agent.load_session()`（可选方法）：
+
+```python
+async def load_session(self, cwd: str, session_id: str, *,
+                       transcript: Any, **kwargs: Any) -> NewSessionResponse:
+    """恢复历史会话：transcript 是客户端存的历史记录，灌回自己的对话状态"""
+    ...
+```
+
+注：`session/load` 是稳定方法；配套的 `list_sessions` / `fork_session` / `resume_session` / `close_session` 仍是 unstable，需 `use_unstable_protocol=True`。实测（案例四）claude-code-acp / codex-acp / pi-acp 三家都声明 `loadSession=true`。
+
+## 自行验证（三个实验）
+
+给 EchoAgent 加 stderr 日志（**别用 stdout**，那是 JSON-RPC 通道）：
+
+```python
+import sys, datetime
+
+def log(*a):
+    print(datetime.datetime.now().strftime("%H:%M:%S"), *a, file=sys.stderr, flush=True)
+
+class EchoAgent(Agent):
+    async def initialize(self, protocol_version, **kwargs):
+        log("initialize called")          # 观察进程握手时机
+        ...
+
+    async def new_session(self, cwd, **kwargs):
+        log("new_session called")
+        ...
+```
+
+1. 选 Echo 发消息 → 一次 `initialize` + `new_session`（任务管理器里同时能看到 python.exe 出现）；
+2. 再开第二个 Echo 对话 → 只有 `new_session`，没有新的 `initialize`（进程数不变）；
+3. 重启 Zed 后打开历史对话继续发消息 → 又出现一次 `initialize`（新进程），且回显只针对新消息——证明旧上下文没恢复。
+
+一句话总结：**initialize 跟进程走（每进程一次），session 跟对话走（每对话一次）；重载历史时进程活着就复用、死了就重启；历史能否"喂回"新进程，取决于 agent 是否声明 `loadSession` 能力并实现 `session/load`**——EchoAgent 两者都没有，重载后它是个"失忆"的全新实例。
+
+
 
 # SDK 核心模型
 
@@ -620,6 +727,11 @@ helpers:   update_agent_message_text / update_agent_thought_text
 
 铁律:      stdout 只走协议, 调试用 stderr
            子进程环境默认裁剪, API KEY 用 env= 显式传
+
+生命周期:  initialize 跟进程走(每进程一次), session 跟对话走(每对话一次)
+           同一 agent 的多个对话共享一个进程, session_id 必须唯一(uuid)
+           重载历史: 进程活着就复用, 死了就重启(重新 initialize)
+           历史恢复: 声明 loadSession + 实现 load_session, 否则 agent "失忆"
 
 接现成 Agent (都走 npm adapter, 实测 2026-01):
            Claude Code -> claude-code-acp  (@zed-industries/claude-code-acp)
