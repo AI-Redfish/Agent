@@ -140,7 +140,9 @@ Zed 启动 ──(不启动任何 agent 进程)
 要点：
 
 - `initialize` 是**每进程一次**，不是每条消息、也不是每个对话一次；
-- Zed 对 `agents.json` 里每个条目维持**一个**运行中的进程实例，多个对话共享它——这正是最小 Agent 里 `NewSessionResponse(session_id="s1")` 注释"真实项目用 uuid"的原因：同一进程里多个会话都返回 `s1`，`prompt(session_id, ...)` 会路由错乱。
+- Zed 对 `agents.json` 里每个条目维持**一个**运行中的进程实例，多个对话共享它。
+
+
 
 ## 重载历史会话会重启进程吗
 
