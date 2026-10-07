@@ -1,8 +1,8 @@
 # Human-in-the-Loop
 
-> Agent 越自主，就越需要安全边界。当 Agent 准备删除文件、发送邮件或调用付费 API 时，你是否希望它先"问一声"？本章学习 Human-in-the-Loop（人机协作），为敏感操作添加人工审批。
+Agent 越自主，就越需要安全边界。当 Agent 准备删除文件、发送邮件或调用付费 API 时，你是否希望它先"问一声"？本章学习 Human-in-the-Loop（人机协作），为敏感操作添加人工审批。
 
-## 为什么需要 Human-in-the-Loop？
+# 为什么需要 Human-in-the-Loop？
 
 Agent 的自主性是一把双刃剑：
 
@@ -17,7 +17,7 @@ Agent 的自主性是一把双刃剑：
 
 这就是 Human-in-the-Loop（HITL）——Agent 在执行特定操作前**暂停**，等待人类**审批、修改、拒绝或直接响应**，然后再继续执行。
 
-## `interrupt_on` 配置
+# `interrupt_on` 配置
 
 Deep Agents 通过 `interrupt_on` 参数配置哪些工具需要人工审批。设置后，Deep Agents 会在默认中间件栈中加入 `HumanInTheLoopMiddleware`；如果运行在工具返回前被中断或取消，同一栈里的 `PatchToolCallsMiddleware` 会自动修复消息历史。
 
@@ -66,7 +66,7 @@ agent = create_deep_agent(
 )
 ```
 
-### 三种配置值
+## 三种配置值
 
 | 配置值 | 含义 |
 |---|---|
@@ -74,7 +74,7 @@ agent = create_deep_agent(
 | `False` | 不中断，Agent 直接执行 |
 | `{"allowed_decisions": [...]}` | 启用中断，只允许指定的决策类型 |
 
-### 四种决策类型
+## 四种决策类型
 
 | 决策 | 含义 | 场景 |
 |---|---|---|
@@ -91,23 +91,21 @@ agent = create_deep_agent(
 - **同意但要改参数**：用 `edit`，只修改必要参数
 - **工具本来就是问人**：用 `respond`，让人的回答成为工具结果
 
-## 条件中断：只拦截真正危险的调用
+# 条件中断：只拦截真正危险的调用
 
 默认情况下，只要工具名出现在 `interrupt_on` 里，每次调用都会暂停。如果你只想拦截某些参数组合，可以在配置中加入 `when` 谓词函数。该函数接收 `ToolCallRequest`，返回 `True` 表示中断，返回 `False` 表示自动放行。
 
-> 条件中断需要 `langchain>=1.3.3`。
+条件中断需要 `langchain>=1.3.3`。
 
 ```python
 from deepagents import create_deep_agent
 from langchain.agents.middleware import ToolCallRequest
 from langgraph.checkpoint.memory import MemorySaver
 
-
 def writes_outside_workspace(request: ToolCallRequest) -> bool:
     """只有写入工作区外的路径时才暂停。"""
     path = request.tool_call["args"].get("file_path", "")
     return not path.startswith("/workspace/")
-
 
 agent = create_deep_agent(
     model=model,
@@ -123,7 +121,7 @@ agent = create_deep_agent(
 
 当 `when` 返回 `False` 时，这次工具调用不会加入中断批次；审批界面只需要展示真正需要人工决策的动作。
 
-## 中断与恢复：完整流程
+# 中断与恢复：完整流程
 
 当 Agent 调用一个配置了 `interrupt_on` 的工具时，执行流程变为：
 
@@ -132,7 +130,7 @@ agent = create_deep_agent(
 **3. 用户检查中断内容，做出决策**
 **4. 用相同的 `thread_id` 恢复执行**
 
-> **图示**：Human-in-the-Loop 执行流程：Agent 运行 → 判断是否中断 → 用户决策（approve/edit/reject/respond）→ 执行工具或返回 ToolMessage → 恢复执行
+**图示**：Human-in-the-Loop 执行流程：Agent 运行 → 判断是否中断 → 用户决策（approve/edit/reject/respond）→ 执行工具或返回 ToolMessage → 恢复执行
 代码实现：
 
 ```python
@@ -180,16 +178,16 @@ if result.interrupts:
 print(result.value["messages"][-1].content)
 ```
 
-### 关键要求
+## 关键要求
 
 - **必须配置 Checkpointer**：HITL 依赖状态持久化，没有 Checkpointer 无法恢复
 - **必须使用相同的 `thread_id`**：中断和恢复必须在同一个线程中
 - **必须使用 `version="v2"`**：HITL 需要 v2 版本的 invoke 接口
 - **决策数量和顺序必须匹配**：`decisions` 要和 `action_requests` 一一对应，顺序不能乱
 
-> 字段名说明：Deep Agents 文档示例里常见 `action_request["args"]`，LangChain 标准 `HumanInTheLoopMiddleware` 示例里展示的是 `action_request["arguments"]`。如果你的审批界面要兼容两种入口，可以像上面的代码一样读取 `arguments`，没有时再回退到 `args`。但恢复 `edit` 决策时，`edited_action` 仍然使用 `args`。
+字段名说明：Deep Agents 文档示例里常见 `action_request["args"]`，LangChain 标准 `HumanInTheLoopMiddleware` 示例里展示的是 `action_request["arguments"]`。如果你的审批界面要兼容两种入口，可以像上面的代码一样读取 `arguments`，没有时再回退到 `args`。但恢复 `edit` 决策时，`edited_action` 仍然使用 `args`。
 
-## 拒绝时写清楚反馈
+# 拒绝时写清楚反馈
 
 当用户返回 `reject` 时，Deep Agents 会跳过该工具调用，并把拒绝反馈返回给 Agent。如果不传 `message`，默认反馈会告诉模型工具没有执行、不要重复调用同一个工具。对于敏感工具，建议写清楚下一步应该怎么做：
 
@@ -200,19 +198,17 @@ decisions = [{
 }]
 ```
 
-## 直接响应：只用于问用户的工具
+# 直接响应：只用于问用户的工具
 
 `respond` 不是"软拒绝"，而是"人类亲自返回工具结果"。它适合专门设计成占位的 `ask_user` 工具：工具调用本身不执行，人的回答直接作为成功的工具结果交还给 Agent。
 
 ```python
 from langchain.tools import tool
 
-
 @tool
 def ask_user(question: str) -> str:
     """向用户提问；真实回答由 HITL 的 respond 决策提供。"""
     return "等待用户回答"
-
 
 agent = create_deep_agent(
     model=model,
@@ -231,7 +227,7 @@ decisions = [{
 
 这里的 `message` 会被 Agent 当作 `ask_user` 的成功返回值。如果人的意思是"不要执行删除/发送/部署"，仍然应该用 `reject`；如果只是改收件人、路径或 SQL 条件，应该用 `edit`。
 
-## 编辑工具参数
+# 编辑工具参数
 
 当决策类型包含 `edit` 时，用户可以修改工具的参数再执行：
 
@@ -267,7 +263,7 @@ if result.interrupts:
 
 编辑时尽量只做保守修改，例如改收件人、路径或 SQL 条件。大幅改写工具参数可能让模型重新评估原计划，进而重复调用工具或走向你没有预期的动作。
 
-## 批量工具调用的中断处理
+# 批量工具调用的中断处理
 
 当 Agent 同时调用多个需要审批的工具时，所有中断会**打包成一个**。你需要按顺序为每个工具提供决策：
 
@@ -300,7 +296,7 @@ if result.interrupts:
     )
 ```
 
-## 子 Agent 的中断配置
+# 子 Agent 的中断配置
 
 子 Agent 可以有**独立的** `interrupt_on` 配置，覆盖主 Agent 的设置：
 
@@ -328,7 +324,7 @@ agent = create_deep_agent(
 
 这样设计的场景很实际：主 Agent 是你信任的，但子 Agent 可能操作更敏感的数据，需要更严格的审批策略。
 
-## 按风险等级分层的最佳实践
+# 按风险等级分层的最佳实践
 
 不是所有工具都需要同等程度的审批。推荐按风险等级分三层配置：
 
@@ -357,7 +353,7 @@ interrupt_on = {
 }
 ```
 
-> **图示**：按风险等级分层配置：低风险（只读，无需中断）→ 中风险（写入，审批/拒绝）→ 高风险（删除/发送，完全控制）
+**图示**：按风险等级分层配置：低风险（只读，无需中断）→ 中风险（写入，审批/拒绝）→ 高风险（删除/发送，完全控制）
 | 风险等级 | 工具类型 | 配置 | 理由 |
 |---|---|---|---|
 | 高风险 | 删除、覆盖写入、发送、部署 | `approve/edit/reject` | 操作不可逆或影响外部系统，避免 `respond` 被误当成成功结果 |
@@ -365,9 +361,9 @@ interrupt_on = {
 | 低风险 | 读取、搜索、列表 | `False` | 只读操作，安全无副作用 |
 | 人工输入型 | 询问偏好、补充缺失信息 | `respond` | 工具本来就是让人回答，人的 `message` 会成为成功工具结果 |
 
-## 文件系统权限中断
+# 文件系统权限中断
 
-除了 `interrupt_on`，Deep Agents 的内置文件系统工具也可以通过权限规则触发中断。这个能力需要 `deepagents>=0.6.8`。第 3 章介绍的 [`write_file`、`edit_file` 和 `delete`](../03.虚拟文件系统/虚拟文件系统.md) 在命中 `mode="interrupt"` 的权限规则时，Deep Agents 会抛出和普通工具审批相同格式的 HITL 中断：
+除了 `interrupt_on`，Deep Agents 的内置文件系统工具也可以通过权限规则触发中断。这个能力需要 `deepagents>=0.6.8`。第 3 章介绍的 `write_file`、`edit_file` 和 `delete` 在命中 `mode="interrupt"` 的权限规则时，Deep Agents 会抛出和普通工具审批相同格式的 HITL 中断：
 
 ```python
 from deepagents import FilesystemPermission, create_deep_agent
@@ -390,9 +386,9 @@ agent = create_deep_agent(
 
 v0.7 中 `write_file` 会完整覆盖已有文件，内置 `delete` 还能递归删除目录。因此 `operations=["write"]` 保护的不只是“新建或编辑”，也包括覆盖和删除；包含受保护后代的目录删除会整体拒绝，不会只删掉其中一部分。真实文件系统上的敏感路径优先使用路径权限，`interrupt_on` 更适合控制自定义工具或对所有路径采用同一审批策略。
 
-本章重点是中断后的审查与恢复；如何组合 `allow`、`deny`、`interrupt`，以及为什么权限不能约束自定义工具或沙箱 `execute`，见[第 11 章：文件系统权限](../09.沙箱与权限/02.文件系统权限.md)。
+本章重点是中断后的审查与恢复；如何组合 `allow`、`deny`、`interrupt`，以及为什么权限不能约束自定义工具或沙箱 `execute`，见第 11 章：文件系统权限。
 
-## 揭开引擎盖：LangGraph 的中断机制
+# 揭开引擎盖：LangGraph 的中断机制
 
 `interrupt_on` 的底层是 LangGraph 的<strong>中断（Interrupt）</strong>原语。当你在工具或图节点中直接调用 `interrupt()` 函数时，可以实现更灵活的审批逻辑：
 
@@ -436,7 +432,7 @@ result = agent.invoke(
 
 `interrupt()` 是 LangGraph 的底层能力，`interrupt_on` 是 Deep Agents 在此基础上封装的工具审批接口。
 
-### 在自定义 Middleware 中使用 interrupt()
+## 在自定义 Middleware 中使用 interrupt()
 
 LangChain 的 Node-style Middleware Hook 会成为 Agent 图中的独立节点，因此可以直接调用 `interrupt()`。官方 `HumanInTheLoopMiddleware` 本身就是这样实现的：在 `after_model` 中检查模型提出的工具调用，再通过 `interrupt()` 暂停。
 
@@ -451,7 +447,6 @@ from langchain.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.runtime import Runtime
 from langgraph.types import Command, interrupt
-
 
 class DraftApprovalMiddleware(AgentMiddleware):
     def after_model(
@@ -478,7 +473,6 @@ class DraftApprovalMiddleware(AgentMiddleware):
         return {
             "messages": [AIMessage(content=f"草稿未发布：{reason}")],
         }
-
 
 agent = create_deep_agent(
     model=model,
@@ -510,7 +504,7 @@ final = agent.invoke(
 | 整次 Agent 运行前后确认 | `before_agent` / `after_agent` | 适合会话级策略 |
 | 重试、缓存、模型降级 | `wrap_model_call` / `wrap_tool_call` | 需要控制 `handler`，不以人工暂停为主 |
 
-### 运行时视角：一次中断到底保存了什么？
+## 运行时视角：一次中断到底保存了什么？
 
 从 LangGraph 的运行时机制看，`interrupt()` 不是普通的 `input()`。它会把控制权从图执行器交还给调用方，并把恢复所需的信息保存下来：
 
@@ -523,8 +517,9 @@ final = agent.invoke(
 
 所以，HITL 的关键不是"弹一个确认框"，而是让工作流在任意时间跨度后仍然能安全恢复：几秒后恢复、几小时后恢复，甚至换一个进程恢复，只要 Checkpointer 还在、`thread_id` 还一致。
 
-> **图示**：LangGraph 中断机制：节点调用 interrupt() 后生成中断对象，Checkpointer 保存状态，人类用 Command(resume=...) 返回结果，并通过同一 thread_id 恢复执行，恢复时节点会从头重放
-### 单个中断 vs 并行中断
+**图示**：LangGraph 中断机制：节点调用 interrupt() 后生成中断对象，Checkpointer 保存状态，人类用 Command(resume=...) 返回结果，并通过同一 thread_id 恢复执行，恢复时节点会从头重放
+
+## 单个中断 vs 并行中断
 
 如果同一时间只有一个 `interrupt()` 暂停，`Command(resume=...)` 可以直接传入一个值：
 
@@ -552,7 +547,7 @@ graph.invoke(Command(resume=resume_map), config=config)
 
 这就是运行机制比界面呈现更底层的地方：界面可以显示成两个审批卡片，但恢复时最好让每个答案绑定到自己的中断 ID，避免并行节点、子图或重排导致回答错配。
 
-### 如何检查暂停在哪里？
+## 如何检查暂停在哪里？
 
 当图暂停后，你可以查看 thread 的状态快照。状态快照通常包含：
 
@@ -581,7 +576,7 @@ print(thread_state["next"])
 
 这对排查"为什么没有继续执行"很有用：如果 `interrupts` 还在，说明还缺 resume；如果 `thread_id` 不对，你看到的会是另一个线程的状态。
 
-### interrupt() 的工作原理
+## interrupt() 的工作原理
 
 理解 `interrupt()` 的内部机制，能帮你避免常见的坑：
 
@@ -592,7 +587,7 @@ print(thread_state["next"])
 
 关键点在第 3 步：**恢复时节点从头重新执行**，而不是从 `interrupt()` 那一行继续。这意味着 `interrupt()` 之前的代码会**再跑一次**。
 
-### interrupt() 的使用规则
+## interrupt() 的使用规则
 
 基于上面的原理，有几条重要的规则：
 
@@ -674,7 +669,7 @@ graph.invoke(Command(resume=resume), config=config)
 
 因此，节点代码要能承受"中断前逻辑被再次执行"。凡是不能重复执行的动作，都应该放在 `interrupt()` 之后，或者做成幂等操作。
 
-### 更多模式：输入验证
+## 更多模式：输入验证
 
 如果要做人类输入校验，不要在同一个节点里写 `while True` 然后反复调用 `interrupt()`。因为每次恢复都会从节点开头重放，循环里的前几轮也会跟着重跑，输入越多，重复执行越明显。
 
@@ -686,11 +681,9 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-
 class FormState(TypedDict):
     age: int | None
     pending_question: str | None
-
 
 def collect_age(state: FormState):
     question = state.get("pending_question") or "请输入你的年龄："
@@ -703,10 +696,8 @@ def collect_age(state: FormState):
         "pending_question": f"'{answer}' 不是有效年龄，请输入正整数。"
     }
 
-
 def route(state: FormState):
     return END if state.get("age") is not None else "collect_age"
-
 
 builder = StateGraph(FormState)
 builder.add_node("collect_age", collect_age)
@@ -716,7 +707,7 @@ builder.add_conditional_edges("collect_age", route)
 
 这样每次恢复只处理一次回答。回答无效时，图通过条件边回到 `collect_age`，下一次中断会展示更新后的提示；回答有效时，流程结束。
 
-### 静态中断：调试利器
+## 静态中断：调试利器
 
 除了 `interrupt()` 函数（动态中断），LangGraph 还支持**静态中断**——在编译时指定哪些节点前后暂停，用于调试：
 
@@ -735,7 +726,7 @@ graph.invoke(None, config=config)     # 传入 None 继续执行
 
 静态中断适合开发阶段的逐步调试，**不推荐**用于生产环境的人机协作——那应该用 `interrupt()` 函数。
 
-### 什么时候直接使用底层 interrupt()？
+## 什么时候直接使用底层 interrupt()？
 
 Deep Agents 的 `interrupt_on` 已经覆盖了大多数“工具调用前审批”场景。当暂停点不属于单个工具，或需要在自定义业务节点、Middleware 生命周期中控制流程时，再直接使用 `interrupt()`：
 
@@ -751,7 +742,7 @@ Deep Agents 的 `interrupt_on` 已经覆盖了大多数“工具调用前审批�
 
 理解了这些底层机制，你就可以构建更复杂的审批工作流——多级审批、条件审批、带验证的人工输入、并行人工任务，甚至跨子图的中断传播。
 
-## 小结
+# 小结
 
 本章我们学习了 Deep Agents 的人机协作能力：
 
@@ -768,11 +759,8 @@ Deep Agents 的 `interrupt_on` 已经覆盖了大多数“工具调用前审批�
 
 下一章，我们将学习沙箱执行——让 Agent 在受控环境中安全地运行代码。
 
----
+# 参考资料
 
-## 相关资源
-
-- **原文**：[第 9 章：Human-in-the-Loop — 构建安全的人机协作流程](https://datawhalechina.github.io/deepagents-in-action/chapters/ch09-human-in-the-loop/)（发布 2026-07-06）
-- **视频**：[Lec 12: HITL（上）— 配置代码与恢复流程（B站）](https://www.bilibili.com/video/av116879716783415/) ｜ [小红书](http://xhslink.com/o/8cDyhM95h7h)
-- **视频**：[Lec 13: HITL（下）— interrupt() 代码与运行时规则（B站）](https://www.bilibili.com/video/BV1uFMH6wEyS/) ｜ [小红书](http://xhslink.com/o/7PSsu4GbFih)
-- **说明**：详细摘录笔记，保留原文章节结构、代码与表格；原文配图以「图示」文字摘要替代；章间引用为本地笔记相对链接
+- 原文：第 9 章：Human-in-the-Loop — 构建安全的人机协作流程（`https://datawhalechina.github.io/deepagents-in-action/chapters/ch09-human-in-the-loop/`）（发布 2026-07-06）
+- 视频：Lec 12: HITL（上）— 配置代码与恢复流程（B站）（`https://www.bilibili.com/video/av116879716783415/`） ｜ 小红书（`http://xhslink.com/o/8cDyhM95h7h`）
+- 视频：Lec 13: HITL（下）— interrupt() 代码与运行时规则（B站）（`https://www.bilibili.com/video/BV1uFMH6wEyS/`） ｜ 小红书（`http://xhslink.com/o/7PSsu4GbFih`）

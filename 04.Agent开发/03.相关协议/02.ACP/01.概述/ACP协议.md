@@ -306,6 +306,247 @@ Client 渲染最终结果 → 用户
 
 一句话总结：**决策与编排永远在 Agent；执行分散在 Agent（内置工具、MCP 调用）、Client（fs / terminal 代管）、MCP Server（工具本体）三处；审批与展示永远在 Client。**
 
+# 配置文件方式接入
+
+客户端通过声明的配置文件，说明可以接入哪些Agent。
+
+
+
+**协议不管"发现"，客户端自己管**
+
+ACP协议本身没有服务发现方法，不存在 `agents/list` 这样的 功能。
+
+Agent 进程启动之前对客户端不可见，必须先有人告诉客户端："用什么命令、什么参数、什么环境，把这个 Agent 拉起来"。
+
+这个职责的通行解法就是配置文件驱动的 Agent 注册表（Agent Registry）。
+
+
+
+"通过配置文件定义接入了哪些 Agent，然后加载连接"的代表实现就是 **Zed 编辑器**：`agents.json`（或 `settings.json` 的 `agent_servers`）声明接入哪些 Agent，Zed 启动时读文件列出清单，用户选中某个 Agent 时再按配置拉起子进程并建立 ACP 连接。
+
+
+
+## 配置文件
+
+**Zed 的两种配置写法**
+
+
+
+**写法一：独立的 `agents.json`**
+
+（Linux/macOS：`~/.config/zed/agents.json`；Windows：`%APPDATA%\Zed\agents.json`），数组形式：
+
+```json
+[
+  {
+    "id": "claude-code",
+    "name": "Claude Code",
+    "command": { "command": "claude-code-acp", "args": [], "env": {} }
+  },
+  {
+    "id": "codex",
+    "name": "Codex",
+    "command": { "command": "cmd", "args": ["/c", "codex-acp"], "env": {} }
+  },
+  {
+    "id": "echo",
+    "name": "Echo (Python)",
+    "command": {
+      "command": "python",
+      "args": ["D:/develop/agents/echo_agent.py"],
+      "env": { "MY_FLAG": "1" }
+    }
+  }
+]
+```
+
+**写法二：`settings.json` 的 `agent_servers`**（编辑器主配置里的 map 形式）：
+
+```json
+{
+  "agent_servers": {
+    "Echo Agent (Python)": {
+      "type": "custom",
+      "command": "python",
+      "args": ["D:/develop/agents/echo_agent.py"],
+      "env": {}
+    }
+  }
+}
+```
+
+
+
+两种写法抽象出的通用 schema 是一样的，任何 ACP 客户端的注册表都长这样：
+
+| 字段 | 作用 | 备注 |
+| --- | --- | --- |
+| `id` / map 的 key | 条目唯一标识 | 客户端内部索引 |
+| `name` | UI 展示名 | Agent Panel 下拉框里看到的就是它 |
+| `command` | 可执行程序 | 会在 PATH 中查找；Windows 下 npm 装的 `.cmd` 需 `cmd /c` 包装 |
+| `args` | 命令行参数 | 脚本路径、开关（如旧版 `--experimental-acp`）等 |
+| `env` | 注入子进程的环境变量 | API Key 等凭据的标准注入点 |
+| `cwd`（可选） | 子进程工作目录 | 影响 Agent 读到的相对路径与项目上下文 |
+
+**配置里只有"怎么启动进程"；进程起来之后怎么说话，由 ACP 协议接管。** 所以配置驱动的本质 = **进程启动模板的注册表**。
+
+
+
+## 加载与连接流程（实现原理）
+
+```text
+客户端启动（Zed / 任何 ACP 客户端）
+   │
+   ▼
+① 读 agents.json / agent_servers      ← 纯文件解析，此时不 spawn 任何进程
+   │
+   ▼
+② 构建内存注册表 AgentRegistry         ← [{id, name, command, args, env, cwd}, ...]
+   │
+   ▼
+③ UI 下拉框列出所有 name              ← 用户看到"接入了哪些 Agent"
+   │
+   ▼（懒加载：用户选中某 Agent、发第一条消息时才发生）
+④ spawn 子进程(command + args + env + cwd)
+   │
+   ▼
+⑤ initialize 握手（声明 clientCapabilities、读 authMethods）
+   │     └─ Agent 未登录时先引导认证（authenticate），再继续
+   ▼
+⑥ session/new → prompt                ← 进入协议层生命周期（见前文）
+   │
+   ▼
+⑦ 该条目的进程实例被缓存复用           ← 一个条目一个进程，多会话共享
+```
+
+设计要点：
+
+- **声明式 + 懒加载**：启动时只解析文件，不预拉全部 Agent；首次使用某条目才 spawn。配置错误（命令不存在等）要到使用时才暴露。
+- **一个条目 = 一个进程实例**：同一条目的多个对话共享同一子进程，靠 session_id 区分（详见生命周期一节）。
+- **env 是凭据注入点**：API key 写在条目的 env 里，不进代码；子进程默认环境是被裁剪的，env 是标准补齐通道。
+- **adapter 对客户端透明**：非 ACP 原生的 Agent（Claude Code / Codex / pi）在条目里填 adapter 命令（`claude-code-acp`、`codex-acp`、`pi-acp`）即可，客户端完全无感——这正是配置模式的价值：**换 Agent 只改配置文件，不改客户端代码**。
+
+
+
+## Python 自实现
+
+现状一句话：**协议层有现成 SDK，"配置 → 注册表 → 懒加载"这一层没有标准化的现成 Python 框架，基于 SDK 自写薄层约百行。**
+
+| 层 | 现成方案 | 说明 |
+| --- | --- | --- |
+| 协议层（拉起、握手、会话、反向请求） | ✅ `agent-client-protocol`（`import acp`） | `spawn_agent_process(client, *command, env=..., cwd=...)` 就是"按模板拉起并连接"的全部地基 |
+| 注册表层（读配置、管理多 Agent 条目、懒加载缓存） | ❌ 无标准现成框架 | 参考实现是 Zed（Rust，编辑器内）；Python 侧自己组合，逻辑很薄 |
+| 接入非原生 Agent | ✅ npm adapter | claude-code-acp / codex-acp / pi-acp，配置条目里直接填命令 |
+
+**配置文件 `agents.json`**（自定义 schema，字段与 Zed 对齐）：
+
+```json
+{
+  "agents": [
+    { "id": "echo",   "name": "Echo (Python)", "command": ["python", "echo_agent.py"] },
+    { "id": "claude", "name": "Claude Code",   "command": ["cmd", "/c", "claude-code-acp"] },
+    { "id": "codex",  "name": "Codex",         "command": ["cmd", "/c", "codex-acp"],
+      "env": { "OPENAI_API_KEY": "sk-..." } }
+  ]
+}
+```
+
+**加载器 `registry.py`**：
+
+```python
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
+from acp import Client, ClientSideConnection, spawn_agent_process
+from acp.schema import ClientCapabilities, FileSystemCapabilities, Implementation
+
+@dataclass
+class AgentEntry:
+    id: str
+    name: str
+    command: list[str]
+    env: dict[str, str] = field(default_factory=dict)
+    cwd: str = "."
+
+class AgentRegistry:
+    """agents.json -> 按需 spawn -> 缓存连接（一个条目一个进程）"""
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+        self._entries: dict[str, AgentEntry] = {}
+        self._ctxs: dict[str, Any] = {}                      # agent_id -> async ctx
+        self._ready: dict[str, ClientSideConnection] = {}    # agent_id -> 已握手连接
+
+    # ---- ① 启动时：纯文件解析，不拉任何进程（对齐 Zed 行为） ----
+    def load(self, path: str = "agents.json") -> list[AgentEntry]:
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)["agents"]
+        self._entries = {
+            e["id"]: AgentEntry(id=e["id"], name=e.get("name", e["id"]),
+                                command=e["command"], env=e.get("env", {}),
+                                cwd=e.get("cwd", "."))
+            for e in raw
+        }
+        return list(self._entries.values())
+
+    def list_agents(self) -> list[dict]:                     # 供 UI 渲染下拉框
+        return [{"id": e.id, "name": e.name, "running": e.id in self._ready}
+                for e in self._entries.values()]
+
+    # ---- ② 首次使用：spawn + initialize（懒加载，之后复用同一进程） ----
+    async def connect(self, agent_id: str) -> ClientSideConnection:
+        if agent_id in self._ready:
+            return self._ready[agent_id]
+        entry = self._entries[agent_id]
+        ctx = spawn_agent_process(self._client, *entry.command,
+                                  env=entry.env, cwd=entry.cwd)
+        agent, _proc = await ctx.__aenter__()
+        await agent.initialize(
+            protocol_version=1,
+            client_capabilities=ClientCapabilities(
+                fs=FileSystemCapabilities(read_text_file=True, write_text_file=True),
+                terminal=False),
+            client_info=Implementation(name="my-acp-client", version="0.1.0"))
+        self._ctxs[agent_id] = ctx
+        self._ready[agent_id] = agent
+        return agent
+
+    # ---- ③ 退出：优雅关停全部子进程（关 stdin -> 等待 -> kill） ----
+    async def close(self) -> None:
+        for ctx in self._ctxs.values():
+            await ctx.__aexit__(None, None, None)
+```
+
+**使用**（`HeadlessClient` 见 `02.python接入` 案例二）：
+
+```python
+import asyncio
+from acp import text_block
+
+async def main() -> None:
+    registry = AgentRegistry(HeadlessClient())
+
+    for e in registry.load("agents.json"):        # ① 只解析文件
+        print(f"discovered: {e.id} ({e.name})")
+    print(registry.list_agents())                 # ② 渲染 UI 清单
+
+    agent = await registry.connect("echo")        # ③ 此刻才 spawn + initialize
+    session = await agent.new_session(cwd=".")
+    resp = await agent.prompt(session.session_id, [text_block("你好")])
+    print(f"stop_reason={resp.stop_reason}")
+
+    await registry.close()                        # ④ 统一关停
+
+asyncio.run(main())
+```
+
+与 Zed 行为对齐的三个实现细节：
+
+1. **`load()` 不 spawn**——启动快、无副作用；`connect()` 才拉起并握手（懒加载），和 Zed"选中才起进程"一致；
+2. **`_ready` 缓存**——一个条目一个进程，第二次 `connect("echo")` 直接复用连接，只开新 session（对齐生命周期一节：多对话共享进程）；
+3. **凭据走条目 `env`**——SDK spawn 默认裁剪子进程环境（见 `02.python接入` 坑点 4），API Key 等必须经 `env=` 显式传入，条目的 env 字段就是为此设计的注入点。
+
 
 
 

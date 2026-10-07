@@ -1,104 +1,89 @@
-# 概述
+# ACP Python 接入（agent-client-protocol）
 
-python中最推荐的框架是agent-client-protocol。
+Python 侧最推荐的框架：**agent-client-protocol**。社区维护、被 ACP 官网列为推荐 Python SDK（kimi-cli 等项目在用），把协议两侧都做成可直接实现的基类。
 
-由社区维护、被 ACP 官网列为推荐 Python SDK（kimi-cli 等项目在用）。
+| 链接 | 地址 |
+| --- | --- |
+| 仓库 | https://github.com/agentclientprotocol/python-sdk |
+| 文档 | https://agentclientprotocol.github.io/python-sdk/ |
+| 协议官网 | https://agentclientprotocol.com/ |
+| PyPI | https://pypi.org/project/agent-client-protocol/ |
 
+两个方向都能写：
 
-
-**仓库**
-
-https://github.com/agentclientprotocol/python-sdk 
-
-
-
-**文档**
-
-https://agentclientprotocol.github.io/python-sdk/ ；
-
-
-
-它把协议两侧都做成了可直接继承的基类，两个方向都能写：
-
-| 我要做什么 | 继承谁 | 入口 |
+| 我要做什么 | 怎么写 | 入口 |
 | --- | --- | --- |
-| 写一个 Agent，被 Zed 等客户端使用 | `acp.Agent` | `asyncio.run(run_agent(agent))` |
-| 写一个 Client，程序化驱动任意 ACP Agent | `acp.Client` | `spawn_agent_process(client, cmd, *args)` |
+| 写一个 Agent，被 Zed 等客户端使用 | 实现 `acp.Agent`（`typing.Protocol`，鸭子类型即可，不强制继承） | `asyncio.run(run_agent(agent))` |
+| 写一个 Client，程序化驱动任意 ACP Agent | 实现 `acp.Client` | `spawn_agent_process(client, cmd, *args)` |
 
-# 快速上手
+> 协议架构、消息模型、配置文件接入机制见 `01.概述/ACP协议.md`。
 
-**安装**
+# 1. 快速上手（5 分钟跑通）
+
+## 安装
 
 ```bash
-pip install agent-client-protocol
-# 或
-uv add agent-client-protocol
+pip install agent-client-protocol        # 或 uv add agent-client-protocol
+# 可选: pip install "agent-client-protocol[http]"   # httpx + websockets，启用 HTTP/WebSocket 传输
 ```
 
-可选附加依赖：`pip install "agent-client-protocol[http]"`（httpx + websockets，启用 HTTP/WebSocket 传输）。
+⚠️ 包名 `agent-client-protocol`，导入名 `acp`。
 
-
-
-**最小 Agent**
+## 最小 Echo Agent（完整可运行）
 
 ```python
 # echo_agent.py
 import asyncio
+import uuid
 from typing import Any
 
 from acp import (
-    PROTOCOL_VERSION, Agent, InitializeResponse,
-    NewSessionResponse, PromptResponse, run_agent,
-    update_agent_message_text, text_block,
+    PROTOCOL_VERSION, Agent, InitializeResponse, NewSessionResponse,
+    PromptResponse, run_agent, update_agent_message_text,
 )
+from acp.core import AgentSideConnection          # 顶层导入已弃用，从 acp.core 拿
 from acp.schema import Implementation
 
 class EchoAgent(Agent):
+    def __init__(self) -> None:
+        self.conn: AgentSideConnection | None = None
+
+    def on_connect(self, conn: AgentSideConnection) -> None:
+        self.conn = conn                          # 反向调用客户端的句柄
+
     async def initialize(self, protocol_version: int, **kwargs: Any) -> InitializeResponse:
         return InitializeResponse(
             protocol_version=PROTOCOL_VERSION,
-            agent_info=Implementation(name="echo-agent", version="0.1.0"),
-        )
+            agent_info=Implementation(name="echo-agent", version="0.1.0"))
 
     async def new_session(self, cwd: str, **kwargs: Any) -> NewSessionResponse:
-        return NewSessionResponse(session_id="s1")   # 真实项目用 uuid
+        return NewSessionResponse(session_id=uuid.uuid4().hex)
 
     async def prompt(self, session_id: str, prompt: list[Any], **kwargs: Any) -> PromptResponse:
         text = "".join(b.text for b in prompt if b.type == "text")
-        from acp import session_notification  # (示意) 实际通过 conn 发送, 见下文
+        await self.conn.session_update(session_id, update_agent_message_text(text))  # 流式回显
         return PromptResponse(stop_reason="end_turn")
 
-asyncio.run(run_agent(EchoAgent()))
+if __name__ == "__main__":
+    asyncio.run(run_agent(EchoAgent()))           # 在 stdin/stdout 上运行，阻塞直至断连
 ```
 
-三个核心方法对应协议三个请求：`initialize` / `session/new` / `session/prompt`。`Agent` 是 `typing.Protocol`，鸭子类型即可，不强制继承。
+三个必须实现的方法对应协议三个请求：`initialize` / `session/new` / `session/prompt`。
 
+一次最小交互流程：
 
-
-**接入 Zed 验证**
-
-把 agent 注册到 Zed 的 `agents.json`（Linux/macOS：`~/.config/zed/agents.json`；Windows：`%APPDATA%\Zed\agents.json`）：
-
-```json
-[
-  {
-    "id": "echo",
-    "name": "Echo",
-    "command": {
-      "command": "python",
-      "args": ["/abs/path/to/echo_agent.py"]
-    }
-  }
-]
+```text
+Client 启动 Agent 子进程
+    -> initialize（协商协议版本）
+    -> session/new（创建会话）
+    -> session/prompt（发送消息）
+    <- session/update（Agent 流式返回消息）
+    <- PromptResponse(stop_reason="end_turn")
 ```
 
-重启 Zed → 打开 Agent Panel → 选择 Echo → 发消息，能收到回显即跑通。
+## 三种方式验证
 
-
-
-**命令验证**
-
-agent 就是「读 stdin、写 stdout」的 JSON-RPC 进程，可以手工喂一行请求：
+**① 手工喂一行 JSON-RPC**（agent 本质是「读 stdin、写 stdout」的 JSON-RPC 进程）：
 
 ```bash
 echo '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}' | python echo_agent.py
@@ -106,102 +91,46 @@ echo '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":
 
 stdout 返回一行 JSON 响应即正常（进程会继续等输入，Ctrl+C 退出）。
 
+**② 用官方示例 client 驱动**（SDK 仓库自带，不需要 API Key）：
 
-
-# 生命周期
-
-进程、会话与历史恢复（以 Zed 为例）。
-
-连接（进程）与 会话是两个独立的生命周期，initialize` 跟着进程走，`session/new跟着对话走。
-
-## 时间线
-
-```text
-Zed 启动 ──(不启动任何 agent 进程)
-   │
-   ├─ 在 Agent Panel 选中 Echo、创建新对话
-   │     ▼
-   │  spawn `python echo_agent.py` 子进程      ← 进程诞生
-   │     ▼
-   │  initialize()        ← 每个进程只调一次（握手）
-   │     ▼
-   │  new_session()       ← 每个对话调一次，得到 session_id
-   │     ▼
-   │  prompt()            ← 每轮消息调一次
-   │
-   ├─ 又开了第 2、3 个 Echo 对话
-   │     → 不再 spawn 新进程、不再 initialize
-   │     → 只对同一进程发 new_session()（复用进程，靠 session_id 区分）
-   │
-   └─ Zed 退出 / 进程崩溃
-         → 下次使用时重新 spawn → 重新 initialize
+```powershell
+python python-sdk/examples/client.py .\.venv\Scripts\python.exe echo_agent.py
 ```
 
-要点：
+进入交互界面，输入消息收到原样回显即跑通。Windows 下必须显式传 Python 解释器（直接传 `.py` 脚本报 `WinError 193`）。
 
-- `initialize` 是**每进程一次**，不是每条消息、也不是每个对话一次；
-- Zed 对 `agents.json` 里每个条目维持**一个**运行中的进程实例，多个对话共享它。
+**③ 接入 Zed**：把 agent 写进 `agents.json`（Linux/macOS：`~/.config/zed/agents.json`；Windows：`%APPDATA%\Zed\agents.json`），重启 Zed → Agent Panel → 选择 Echo → 发消息：
 
-
-
-## 重载历史会话会重启进程吗
-
-分两种情况：
-
-| 场景 | 是否重启进程 | 行为 |
-| --- | --- | --- |
-| Echo 进程还活着（切走再切回、Zed 未关） | ❌ | 不重启、不重新 initialize；Zed 从本地数据库渲染 UI 历史；thread 在当前进程里还有活的 session_id 就继续复用，后续 `prompt` 直接发过去 |
-| 进程已不在（Zed 重启过、进程崩溃/被关闭） | ✅ | 重新打开该历史会话并继续交互时，重新 spawn 新进程 → 重新 `initialize`；新进程内存里没有任何旧会话状态 |
-
-## 历史上下文去哪了：loadSession 能力
-
-ACP 里**会话的持久化责任在客户端**：Zed 把对话记录存在自己本地（UI 层 transcript），agent 进程里的会话只是内存态。进程重启后，旧上下文能否"恢复进 agent"，取决于 `initialize` 响应中声明的能力：
-
-| agent 声明 | Zed 打开历史会话时的行为 |
-| --- | --- |
-| `capabilities.loadSession = true` | 调用 `session/load`，把 Zed 保存的完整 transcript（历史 user/assistant 消息、工具调用记录）**回放给 agent**，agent 在新进程里重建上下文，后续对话无缝继续 |
-| 未声明（如最小 EchoAgent） | 只能调用 `session/new` 开**全新会话**：历史消息只是 Zed 本地存的 UI 记录，agent 侧完全不知道之前聊了什么 |
-
-SDK 侧对应 `Agent.load_session()`（可选方法）：
-
-```python
-async def load_session(self, cwd: str, session_id: str, *,
-                       transcript: Any, **kwargs: Any) -> NewSessionResponse:
-    """恢复历史会话：transcript 是客户端存的历史记录，灌回自己的对话状态"""
-    ...
+```json
+[
+  {
+    "id": "echo",
+    "name": "Echo",
+    "command": { "command": "python", "args": ["/abs/path/to/echo_agent.py"] }
+  }
+]
 ```
 
-注：`session/load` 是稳定方法；配套的 `list_sessions` / `fork_session` / `resume_session` / `close_session` 仍是 unstable，需 `use_unstable_protocol=True`。实测（案例四）claude-code-acp / codex-acp / pi-acp 三家都声明 `loadSession=true`。
+> 「配置文件驱动接入」的完整机制（通用 schema、加载流程、自实现 registry）见 `01.概述/ACP协议.md`。
 
-## 自行验证（三个实验）
+# 2. 联调环境（版本固定）
 
-给 EchoAgent 加 stderr 日志（**别用 stdout**，那是 JSON-RPC 通道）：
+实测环境：Windows + Python 3.13.5 + agent-client-protocol **0.12.1**（SDK 支持 Python 3.10–3.14）。
 
-```python
-import sys, datetime
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install agent-client-protocol==0.12.1
 
-def log(*a):
-    print(datetime.datetime.now().strftime("%H:%M:%S"), *a, file=sys.stderr, flush=True)
-
-class EchoAgent(Agent):
-    async def initialize(self, protocol_version, **kwargs):
-        log("initialize called")          # 观察进程握手时机
-        ...
-
-    async def new_session(self, cwd, **kwargs):
-        log("new_session called")
-        ...
+# 官方示例代码（版本必须与 PyPI 包一致）
+git clone --depth 1 --branch 0.12.1 https://github.com/agentclientprotocol/python-sdk.git
 ```
 
-1. 选 Echo 发消息 → 一次 `initialize` + `new_session`（任务管理器里同时能看到 python.exe 出现）；
-2. 再开第二个 Echo 对话 → 只有 `new_session`，没有新的 `initialize`（进程数不变）；
-3. 重启 Zed 后打开历史对话继续发消息 → 又出现一次 `initialize`（新进程），且回显只针对新消息——证明旧上下文没恢复。
+- **版本必须保持一致**：不要把 PyPI 旧版本与 GitHub `main` 分支新示例混用，会报 `1 validation error for TextContentBlock: type  Field required`；0.12.1 中用 `text_block()` 等辅助函数创建内容块。
+- Conda 等价：`conda create -n acp_dev python=3.13` 后同样 pip 安装。
+- 验证版本：`python -c "from importlib.metadata import version; print(version('agent-client-protocol'))"`
 
-一句话总结：**initialize 跟进程走（每进程一次），session 跟对话走（每对话一次）；重载历史时进程活着就复用、死了就重启；历史能否"喂回"新进程，取决于 agent 是否声明 `loadSession` 能力并实现 `session/load`**——EchoAgent 两者都没有，重载后它是个"失忆"的全新实例。
-
-
-
-# SDK 核心模型
+# 3. SDK 核心模型
 
 ## 类目总览
 
@@ -210,9 +139,9 @@ class EchoAgent(Agent):
 | `Agent` | `acp` | Agent 侧协议基类（Protocol），实现 `initialize/new_session/prompt/...` |
 | `Client` | `acp` | Client 侧协议基类（Protocol），实现 `session_update/request_permission/fs/*/terminal/*` |
 | `run_agent(agent)` | `acp` | Agent 入口：在 stdio 上运行 Agent，阻塞直至断连 |
-| `connect_to_agent(client, in, out)` | `acp` | 用已有流构造 ClientSideConnection（较少直接用） |
 | `spawn_agent_process(client, cmd, *args)` | `acp` | **Client 入口**：拉起 Agent 子进程，返回 `ClientSideConnection`（async 上下文管理器） |
-| `AgentSideConnection` | `acp.core` | Agent 眼中的"客户端代理”：`session_update()`、`request_permission()`、`read_text_file()`、`write_text_file()`、`create_terminal()`… |
+| `connect_to_agent(client, in, out)` | `acp` | 用已有流构造 ClientSideConnection（较少直接用） |
+| `AgentSideConnection` | `acp.core` | Agent 眼中的"客户端代理"：`session_update()`、`request_permission()`、`read/write_text_file()`、`create_terminal()`… |
 | `ClientSideConnection` | `acp.client.connection` | Client 眼中的"agent 代理"：`initialize()`、`new_session()`、`prompt()`、`cancel()`… |
 | `acp.schema` | — | 全部 Pydantic 模型（从上游 JSON Schema 生成） |
 | `acp.helpers` | — | 构造 content block / update 的便捷函数 |
@@ -238,9 +167,9 @@ class EchoAgent(Agent):
 
 - Client → Agent：请求-响应（`initialize`、`session/new`、`session/prompt`…）+ 通知（`session/cancel`）；
 - Agent → Client：请求-响应（`session/request_permission`、`fs/*`、`terminal/*`）+ 通知（`session/update`）；
-- SDK 里两个方向的"连接对象"互为镜像：拿到 `AgentSideConnection`（通过 `on_connect` 回调）就能反向调用客户端。
+- 两个方向的"连接对象"互为镜像：Agent 通过 `on_connect(conn)` 拿到 `AgentSideConnection`，即可反向调用客户端。
 
-## Agent 接口全貌（`acp.Agent`）
+## Agent 接口（`acp.Agent`）
 
 | 方法 | 类型 | 必须实现 | 说明 |
 | --- | --- | --- | --- |
@@ -257,7 +186,7 @@ class EchoAgent(Agent):
 
 `stop_reason` 取值：`end_turn` / `max_tokens` / `max_turn_requests` / `refusal` / `cancelled`。
 
-## Client 接口全貌（`acp.Client`）
+## Client 接口（`acp.Client`）
 
 | 方法 | 触发来源 | 说明 |
 | --- | --- | --- |
@@ -267,10 +196,10 @@ class EchoAgent(Agent):
 | `write_text_file(session_id, path, content)` | `fs/write_text_file` | 代 agent 写文件 |
 | `create_terminal(session_id, command, args, env, cwd, ...)` | `terminal/create` | 建终端并执行命令 |
 | `terminal_output / wait_for_terminal_exit / kill_terminal / release_terminal` | `terminal/*` | 终端的生命周期管理 |
-| `create_elicitation / complete_elicitation` | `elicitation/*` | 新的表单/URL 引导流程 |
+| `create_elicitation / complete_elicitation` | `elicitation/*` | 表单/URL 引导流程 |
 | `ext_method / ext_notification` | 扩展方法 | 自定义 `_*` 方法 |
 
-# helpers 速查（`acp.helpers`，镜像 Go/TS SDK 的 API）
+## helpers 速查（`acp.helpers`，镜像 Go/TS SDK 的 API）
 
 ```python
 from acp import (
@@ -309,9 +238,71 @@ tool_diff_content("src/main.py", new_text, old_text)          # 工具调用内�
 - `PlanEntryStatus`：`pending / in_progress / completed`
 - `PermissionOptionKind`：`allow_once / allow_always / reject_once / reject_always`
 
-# 案例一：完整 Agent（思考流 + 工具调用 + 审批 + fs 代管）
+# 4. 生命周期：进程 vs 会话
 
-以下代码实测可用（agent-client-protocol 0.12.1）。演示一轮 prompt 里的完整动作序列：思考 → 工具调用生命周期 → 权限审批 → 请客户端代写文件 → 流式回复。
+连接（进程）与会话是两个独立的生命周期：**`initialize` 跟着进程走，`session/new` 跟着对话走**。
+
+```text
+Zed 启动 ──(不启动任何 agent 进程)
+   │
+   ├─ 在 Agent Panel 选中 Echo、创建新对话
+   │     ▼
+   │  spawn `python echo_agent.py` 子进程      ← 进程诞生
+   │     ▼
+   │  initialize()        ← 每个进程只调一次（握手）
+   │     ▼
+   │  new_session()       ← 每个对话调一次，得到 session_id
+   │     ▼
+   │  prompt()            ← 每轮消息调一次
+   │
+   ├─ 又开了第 2、3 个 Echo 对话
+   │     → 不再 spawn 新进程、不再 initialize
+   │     → 只对同一进程发 new_session()（复用进程，靠 session_id 区分）
+   │
+   └─ Zed 退出 / 进程崩溃
+         → 下次使用时重新 spawn → 重新 initialize
+```
+
+## 重载历史会话会重启进程吗
+
+| 场景 | 是否重启进程 | 行为 |
+| --- | --- | --- |
+| Echo 进程还活着（切走再切回、Zed 未关） | ❌ | 不重启、不重新 initialize；Zed 从本地数据库渲染 UI 历史；thread 在当前进程里还有活的 session_id 就继续复用 |
+| 进程已不在（Zed 重启过、进程崩溃/被关闭） | ✅ | 重新 spawn 新进程 → 重新 `initialize`；新进程内存里没有任何旧会话状态 |
+
+## 历史上下文去哪了：loadSession 能力
+
+ACP 里**会话的持久化责任在客户端**：Zed 把对话记录存在自己本地（UI 层 transcript），agent 进程里的会话只是内存态。进程重启后，旧上下文能否"恢复进 agent"，取决于 `initialize` 响应中声明的能力：
+
+| agent 声明 | Zed 打开历史会话时的行为 |
+| --- | --- |
+| `capabilities.loadSession = true` | 调用 `session/load`，把 Zed 保存的完整 transcript（历史 user/assistant 消息、工具调用记录）**回放给 agent**，agent 在新进程里重建上下文 |
+| 未声明（如最小 EchoAgent） | 只能 `session/new` 开**全新会话**：历史消息只是 Zed 本地的 UI 记录，agent 侧完全不知道之前聊了什么 |
+
+SDK 侧对应 `Agent.load_session()`（可选方法）：
+
+```python
+async def load_session(self, cwd: str, session_id: str, *,
+                       transcript: Any, **kwargs: Any) -> NewSessionResponse:
+    """恢复历史会话：transcript 是客户端存的历史记录，灌回自己的对话状态"""
+    ...
+```
+
+注：`session/load` 是稳定方法；配套的 `list_sessions` / `fork_session` / `resume_session` / `close_session` 仍是 unstable，需 `use_unstable_protocol=True`。实测（案例四）claude-code-acp / codex-acp / pi-acp 三家都声明 `loadSession=true`。
+
+## 自行验证（三个实验）
+
+给 EchoAgent 加 stderr 日志（`print(..., file=sys.stderr)`，**别用 stdout**）观察 `initialize`/`new_session` 调用时机：
+
+1. 选 Echo 发消息 → 一次 `initialize` + `new_session`（任务管理器里能看到 python.exe 出现）；
+2. 再开第二个 Echo 对话 → 只有 `new_session`，没有新的 `initialize`（进程数不变）；
+3. 重启 Zed 后打开历史对话继续发消息 → 又出现一次 `initialize`（新进程），且回显只针对新消息——旧上下文没恢复。
+
+一句话总结：**initialize 跟进程走（每进程一次），session 跟对话走（每对话一次）；进程活着就复用、死了就重启；历史能否"喂回"新进程，取决于是否声明 `loadSession` 并实现 `session/load`**——EchoAgent 两者都没有，重载后是个"失忆"的全新实例。
+
+# 5. 案例一：完整 Agent（思考流 + 工具调用 + 审批 + fs 代管）
+
+实测可用（0.12.1）。演示一轮 prompt 里的完整动作序列：思考 → 工具调用生命周期 → 权限审批 → 请客户端代写文件 → 流式回复。
 
 ```python
 # demo_agent.py
@@ -408,14 +399,14 @@ if __name__ == "__main__":
 
 要点：
 
-- **所有流式更新都通过 `conn.session_update(session_id, update)` 发通知**，`update` 是 helpers 构造的对象（内部带 `session_update` 判别字段）；
-- `request_permission` 的 `tool_call` 参数用 **schema 的 `ToolCallUpdate`** 模型；`helpers.update_tool_call()` 返回的 `ToolCallProgress` 是给 `session_update` 用的，两者不要混用；
+- **所有流式更新都通过 `conn.session_update(session_id, update)` 发通知**，`update` 用 helpers 构造；
+- `request_permission` 的 `tool_call` 参数用 **schema 的 `ToolCallUpdate`**；helpers 的 `update_tool_call()` 返回的 `ToolCallProgress` 是给 `session_update` 用的，两者不要混用；
 - 审批结果是 `AllowedOutcome(outcome="selected", option_id=...)` 或 `DeniedOutcome(outcome="cancelled")`，用 `isinstance` 判别；
-- `prompt()` 的返回值就是 `session/prompt` 的响应；过程中已经发了多少通知，客户端 SDK 会保证先处理完再返回。
+- `prompt()` 的返回值就是 `session/prompt` 的响应；客户端 SDK 会保证先处理完所有 in-flight 通知再返回。
 
-# 案例二：程序化 Client（把任意 ACP Agent 当库调用）
+# 6. 案例二：程序化 Client（把任意 ACP Agent 当库调用）
 
-不打开编辑器，用自己的代码驱动 agent 子进程——适合做自动化、测试、桥接服务。
+不打开编辑器，用自己的代码驱动 agent 子进程——适合自动化、测试、桥接服务。
 
 ```python
 # driver.py
@@ -464,13 +455,13 @@ class HeadlessClient(Client):
         Path(path).write_text(content, encoding="utf-8")
 
     # terminal/*、elicitation、ext_* 按需实现；不支持的直接 raise 即可
-    # （agent 握手时会看 clientCapabilities, 未声明的能力不会被请求）
+    # （agent 握手时会看 clientCapabilities，未声明的能力不会被请求）
 
 async def main() -> None:
     async with spawn_agent_process(
         HeadlessClient(),
         sys.executable, "demo_agent.py",
-        env={},                       # 注意: 默认环境是裁剪过的, 见下文坑点
+        env={},                       # 注意: 默认环境是裁剪过的，见坑点
     ) as (agent, process):
         # 1) 握手
         info = await agent.initialize(
@@ -511,18 +502,15 @@ echo: 你好，ACP | 已写入 | 第 1 轮
 
 要点：
 
-- `spawn_agent_process` 是 async 上下文管理器，退出时自动做优雅关停（先关 stdin → 等待 → terminate → kill）；
-- `ClientSideConnection.prompt()` 会等待本轮所有 in-flight 的 `session/update` 处理完才返回，不会丢尾部通知；
+- `spawn_agent_process` 是 async 上下文管理器，退出时自动优雅关停（关 stdin → 等待 → terminate → kill）；
+- `ClientSideConnection.prompt()` 会等本轮所有 in-flight 的 `session/update` 处理完才返回，不丢尾部通知；
 - `ClientCapabilities`（schema v1.19 起）：`fs` 是 **`FileSystemCapabilities` 对象**（`read_text_file` / `write_text_file` 两个布尔），`terminal` 是布尔；agent 侧据此决定能不能发对应反向请求；
-- 换成 Gemini CLI / Claude Code / Goose 等现成 agent 时，代码几乎不变，只换 `spawn_agent_process` 的命令：
-  ```python
-  async with spawn_agent_process(HeadlessClient(), "gemini", "--experimental-acp") as (agent, _):
-      ...
-  ```
+- 换成现成 agent 只需换 `spawn_agent_process` 的命令，见案例四；
+- 不用 `spawn_agent_process` 时，可自己拉起子进程再用 `connect_to_agent(client, proc.stdin, proc.stdout)` 包装（官方 `examples/client.py` 即这种写法，较少直接用）。
 
-# 案例三：接入真实 LLM 的骨架
+# 7. 案例三：接入真实 LLM（骨架）
 
-把案例一中的"假动作"换成真 LLM 调用即可，推荐结构：
+把案例一的"假动作"换成真 LLM 调用，推荐结构：
 
 ```python
 async def prompt(self, session_id, prompt, **kwargs):
@@ -548,34 +536,34 @@ async def prompt(self, session_id, prompt, **kwargs):
     return PromptResponse(stop_reason="end_turn")
 ```
 
-真实参考：SDK 仓库 `examples/` 目录有流式、权限、Gemini 桥接等可运行示例；`acp.contrib` 提供：
+现成参考：SDK 仓库 `examples/` 有流式、权限、Gemini 桥接等可运行示例；`acp.contrib` 提供：
 
 - `SessionAccumulator`：客户端侧把流式 update 累积成可读的会话快照（消息历史、工具调用状态机合并）；
 - `tool_calls` / `permissions`：工具调用跟踪与权限代理，避免手写状态合并。
 
-# 案例四：接入现成 Agent（Codex / Claude Code / pi）
+# 8. 案例四：接入现成 Agent（Claude Code / Codex / pi）
 
-写好 Client 之后最有价值的用法：把成熟的编码 Agent 当库调用。以下内容全部实测（Windows 11 + Python 3.13 + agent-client-protocol 0.12.1）。
+写好 Client 后最有价值的用法：把成熟的编码 Agent 当库调用。以下全部实测（Windows 11 + Python 3.13 + 0.12.1，2026-01，codex 0.153.4 / claude 2.1.280 / pi 0.85.1）。
 
-## 接入方式总览：当前都要走 adapter
-
-实测本机三个 CLI 的现状（2026-01，codex 0.153.4 / claude 2.1.280 / pi 0.85.1）：
+## 都要走 npm adapter
 
 | Agent | 原生 ACP？ | 接入命令（npm adapter） | 实测 agentInfo |
 | --- | --- | --- | --- |
 | Claude Code | ❌ `--experimental-acp` 已不存在 | `claude-code-acp`（`@zed-industries/claude-code-acp`） | name=@zed-industries/claude-code-acp, title=Claude Code |
-| Codex | ❌ 早期有 `codex acp` 实验子命令，已移除（二进制里搜不到任何 ACP 痕迹） | `codex-acp`（`@agentclientprotocol/codex-acp`，另有 `@zed-industries/codex-acp`） | title=Codex, v2.0.0 |
-| pi | ❌ 无 acp 子命令（`pi acp` 会被当作消息进入 TUI 导致挂起） | `pi-acp`（社区包，deepstereo） | title=pi ACP adapter, v0.0.34 |
+| Codex | ❌ 早期 `codex acp` 子命令已移除 | `codex-acp`（`@agentclientprotocol/codex-acp`） | title=Codex, v2.0.0 |
+| pi | ❌ 无 acp 子命令（`pi acp` 会被当作消息挂起） | `pi-acp`（社区包，deepstereo） | title=pi ACP adapter, v0.0.34 |
 
 ```bash
 npm install -g @zed-industries/claude-code-acp @agentclientprotocol/codex-acp pi-acp
 ```
 
-adapter 的定位：在 CLI 和 ACP 客户端之间做协议翻译（把 CLI 的流式输出、权限模式、slash 命令映射成 ACP 消息），底层还是调 `claude` / `codex` / `pi` 本体，所以**登录凭据、配置文件、skills 全部复用**，认证状态必须先在终端里准备好（`claude /login`、`codex login`、`pi auth`），否则 initialize 会返回 authMethods 让你先去登录。
+adapter = 在 CLI 和 ACP 客户端之间做协议翻译，底层还是调 `claude` / `codex` / `pi` 本体，所以**登录凭据、配置文件、skills 全部复用**。认证必须先在终端里准备好（`claude /login`、`codex login`、`pi auth`），否则 initialize 会返回 authMethods 要求先登录。
+
+⚠️ 网上旧教程里的 `claude --experimental-acp`、`codex acp`、`pi acp` 已全部失效，统一走 npm adapter。
 
 ## 三家的模式映射（session modes）
 
-`new_session` 返回的 modes 是各家“权限/沙箱/思考档位”的 ACP 映射，可用 `session/set_mode` 切换：
+`new_session` 返回的 modes 是各家"权限/沙箱/思考档位"的 ACP 映射，可用 `session/set_mode` 切换：
 
 | Agent | available modes | 语义 |
 | --- | --- | --- |
@@ -583,7 +571,7 @@ adapter 的定位：在 CLI 和 ACP 客户端之间做协议翻译（把 CLI 的
 | Codex | `read-only` / `workspace-write` / `agent` / `agent-full-access` | Codex 的沙箱级别 |
 | pi | `low` / `high` / `max` | pi 的 thinking level |
 
-## 通用驱动脚本（实测可跑）
+## 通用驱动脚本（同一客户端代码，零修改切换三家）
 
 ```python
 # drive_any_agent.py —— 复用案例二的 HeadlessClient，换命令即可切换 Agent
@@ -613,7 +601,7 @@ async def main():
 asyncio.run(main())
 ```
 
-三家的实测输出（同一客户端代码，零修改）：
+实测输出：
 
 ```text
 # python drive_any_agent.py claude
@@ -639,15 +627,15 @@ stop_reason=end_turn
 
 ## 值得关注的实测细节
 
-- **slash 命令/技能透传**：三家都会在 prompt 开始时发 `available_commands_update`，把 CLI 本体的命令广播出来——实测 pi-acp 把用户安装的 skill（如 `/skill:dws`）、codex-acp 把 `$review-agent`、`$openai-docs` 等技能全部列了出来。客户端可以直接渲染成 `/` 菜单，选中后把命令文本随 `session/prompt` 发回；
-- **usage_update**：pi 和 codex 会推送 token 用量（`used`/`size`），可用来渲染上下文水位条；
-- **session_info_update**：codex 用它报线程状态（active/idle），pi 报队列深度；
+- **slash 命令/技能透传**：三家都在 prompt 开始时发 `available_commands_update`，把 CLI 本体的命令广播出来（pi-acp 列出用户安装的 skill 如 `/skill:dws`，codex-acp 列出 `$review-agent` 等）。客户端渲染成 `/` 菜单，选中后把命令文本随 `session/prompt` 发回；
+- **usage_update**：pi 和 codex 推送 token 用量（`used`/`size`），可渲染上下文水位条；
+- **session_info_update**：codex 报线程状态（active/idle），pi 报队列深度；
 - **思考流**：claude 和 codex 有 `agent_thought_chunk`，pi 默认没有（除非高 thinking 档）；
-- **能力声明**：三家都声明 `loadSession=true`，可以配合 `session/load` / `list_sessions` 做会话恢复（后两者是 unstable 方法，需 `use_unstable_protocol=True`）。
+- **能力声明**：三家都声明 `loadSession=true`，可配合 `session/load` / `list_sessions` 做会话恢复（后两者 unstable）。
 
 ## 同一套配置接入 Zed（agents.json）
 
-程序化验证通过后，把同样的命令写进 Zed 就能在编辑器里用：
+程序化验证通过后，把同样的命令写进 Zed 就能在编辑器里用（配置驱动的加载原理详见 `01.概述/ACP协议.md`「配置文件接入」）：
 
 ```json
 [
@@ -671,51 +659,47 @@ stop_reason=end_turn
 
 Windows 上如果 Zed 找不到命令，写成 `"command": "cmd", "args": ["/c", "claude-code-acp"]`，或直接用绝对路径指向 `claude-code-acp.cmd`。
 
-# 坑点与注意事项（实测踩过）
+# 9. 坑点速查（实测踩过）
 
 1. **导入名是 `acp`**：`pip install agent-client-protocol`，但 `import acp`。
-2. **顶层导出不全**：`Implementation`、`ClientCapabilities`、`FileSystemCapabilities`、`PermissionOption`、`ToolCallUpdate`、`AllowedOutcome` 等在 **`acp.schema`** 里；顶层 `acp` 只导出核心类、入口函数、helpers 和请求/响应模型。找不到就 `from acp.schema import ...`。
+2. **顶层导出不全**：`Implementation`、`ClientCapabilities`、`FileSystemCapabilities`、`PermissionOption`、`ToolCallUpdate`、`AllowedOutcome` 等在 **`acp.schema`** 里；顶层只导出核心类、入口函数、helpers 和请求/响应模型。
 3. **`AgentSideConnection` 顶层导入已弃用**（DeprecationWarning），用 `from acp.core import AgentSideConnection`。
-4. **Agent 子进程环境被裁剪**：SDK spawn 子进程时默认只保留白名单环境变量（Windows: `PATH/APPDATA/TEMP/...`；POSIX: `HOME/PATH/...`，遵循 MCP 最佳实践）。`PYTHONPATH`、`API_KEY` 等都**不会继承**，必须显式传：
-   ```python
-   spawn_agent_process(client, "python", "agent.py",
-                       env={"ANTHROPIC_API_KEY": "sk-...", "PYTHONPATH": "..."})
-   ```
-   症状：子进程秒退、客户端报 `ConnectionError: Connection closed`。
-5. **Agent 进程里不要往 stdout print 调试信息**：stdout 是 JSON-RPC 通道，混入普通文本直接破坏协议。调试一律走 stderr（`print(..., file=sys.stderr)`）或日志文件。
-6. **`request_permission` 的参数类型**：`tool_call` 要传 `acp.schema.ToolCallUpdate`；helpers 的 `update_tool_call()` 返回 `ToolCallProgress`（session_update 载体），传过去会被当多余字段拒绝。
-7. **Windows 支持没问题**：SDK 内部对 Windows 用"stdin 线程 feeder + 自定义 stdout transport"绕开了 ProactorEventLoop 的管道限制，无需特殊处理。
-8. **stdio 缓冲默认 50MB**（`DEFAULT_STDIO_BUFFER_LIMIT_BYTES`），多模态大 payload也够用；`run_agent()` 可用 `stdio_buffer_limit_bytes=` 调整。
-9. **unstable 特性要显式开启**：`fork/resume/close/list_sessions` 等 `session/*` 新方法、elicitations 等，构造连接时传 `use_unstable_protocol=True`，否则路由不注册这些方法（返回 method not found）。
-10. **版本敏感**：SDK 跟随上游 schema 快速演进（本笔记锁定 0.12.1 / schema v1.19.0）。升级后先跑 `pip show agent-client-protocol` 对照，重点看 `ClientCapabilities` 这类结构变化。
-11. **Windows 上 spawn npm CLI 必须 `cmd /c` 包装**：npm 装的命令是 `.cmd` shim，`asyncio.create_subprocess_exec` 直接执行会报 `FileNotFoundError [WinError 2]`。写法：`spawn_agent_process(client, "cmd", "/c", "claude-code-acp")`；Linux/macOS 不需要。
-12. **别再用已失效的原生入口**：`claude --experimental-acp`（unknown option）、`codex acp`（子命令已移除）、`pi acp`（不存在，会当作消息挂起）——网上旧教程里这些写法已失效，统一走 npm adapter（见案例四）。
+4. **Agent 子进程环境被裁剪**：SDK spawn 默认只保留白名单环境变量（Windows: `PATH/APPDATA/TEMP/...`；POSIX: `HOME/PATH/...`，遵循 MCP 最佳实践）。`PYTHONPATH`、`API_KEY` 等**不会继承**，必须显式传 `env={"ANTHROPIC_API_KEY": "sk-...", ...}`。症状：子进程秒退、`ConnectionError: Connection closed`。
+5. **Agent 进程里不要往 stdout print 调试信息**：stdout 是 JSON-RPC 通道，混入普通文本直接破坏协议。调试一律走 stderr 或日志文件。
+6. **`request_permission` 的参数类型**：`tool_call` 传 `acp.schema.ToolCallUpdate`；helpers 的 `update_tool_call()` 返回 `ToolCallProgress`（session_update 载体），传过去会被当多余字段拒绝。
+7. **Windows 支持没问题**：SDK 内部对 Windows 用"stdin 线程 feeder + 自定义 stdout transport"绕开 ProactorEventLoop 的管道限制。
+8. **stdio 缓冲默认 50MB**（`DEFAULT_STDIO_BUFFER_LIMIT_BYTES`），`run_agent()` 可用 `stdio_buffer_limit_bytes=` 调整。
+9. **unstable 特性要显式开启**：`fork/resume/close/list_sessions`、elicitations 等，构造连接时传 `use_unstable_protocol=True`，否则路由不注册（返回 method not found）。
+10. **版本敏感**：SDK 跟随上游 schema 快速演进（本文锁定 0.12.1 / schema v1.19.0）。升级后重点核对 `ClientCapabilities` 这类结构变化。
+11. **Windows 上 spawn npm CLI 必须 `cmd /c` 包装**：npm 装的是 `.cmd` shim，直接 `create_subprocess_exec` 报 `FileNotFoundError [WinError 2]`。写法：`spawn_agent_process(client, "cmd", "/c", "claude-code-acp")`。
+12. **别用已失效的原生入口**：`claude --experimental-acp`（unknown option）、`codex acp`（已移除）、`pi acp`（不存在，会当作消息挂起）——统一走 npm adapter（案例四）。
+13. **示例代码与 SDK 版本必须一致**：混用旧包 + `main` 分支新示例报 `1 validation error for TextContentBlock: type  Field required`。
 
-# 调试技巧
+# 10. 排错与调试
 
-- **看原始报文**：`spawn_agent_process(..., observers=[...])` 可挂流观察者；或临时包一层脚本把子进程 stdout tee 到文件；
-- **最小复现**：先用本文 Echo Agent 验证链路，再逐步加业务，出问题时能区分是协议层还是业务层；
-- **常见错误对照**：
+调试技巧：`spawn_agent_process(..., observers=[...])` 可挂流观察者看原始报文；先用 Echo Agent 验证链路再逐步加业务，区分协议层/业务层问题。
 
 | 现象 | 原因 |
 | --- | --- |
 | `ConnectionError: Connection closed` | 子进程启动即崩：环境变量被裁剪 / import 报错 / 脚本路径错 |
 | `FileNotFoundError [WinError 2]` | Windows 上直接 spawn `.cmd` shim，需要 `cmd /c` 包装 |
+| `OSError: [WinError 193] %1 不是有效的 Win32 应用程序` | 直接把 `.py` 脚本当可执行程序启动；显式传入 Python 解释器 |
 | method not found | unstable 方法未开 `use_unstable_protocol` |
 | agent 发的反向请求收不到 | 客户端 `clientCapabilities` 没声明 fs/terminal |
 | 消息出现乱码 | 终端 GBK 显示问题，协议层是 UTF-8，写入文件验证即可 |
 | spawn 后永久挂起无输出 | 把不存在的子命令当消息传入了 TUI（如 `pi acp`），或进程把日志写进了 stdout 破坏协议 |
+| 单独启动 agent 后终端"没有输出" | 正常现象：agent 在等 stdin 上的 JSON-RPC 请求，`Ctrl+C` 退出 |
 
-# 简化记忆
+# 11. 简化记忆
 
 ```text
 包名 agent-client-protocol, 导入名 acp
 
-写 Agent:  继承 acp.Agent
+写 Agent:  实现 acp.Agent（鸭子类型即可）
            initialize / new_session / prompt 三个必须
            asyncio.run(run_agent(MyAgent()))          # stdio 入口
 
-写 Client: 继承 acp.Client
+写 Client: 实现 acp.Client
            session_update / request_permission / fs / terminal
            spawn_agent_process(...) 拉起 agent 子进程
 

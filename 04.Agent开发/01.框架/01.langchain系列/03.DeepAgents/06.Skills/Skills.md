@@ -1,10 +1,10 @@
 # Skills
 
-> 工具（Tools）是原子操作——搜索一次、读一个文件、调一次 API。但有些能力需要的不是一次操作，而是**多步骤工作流 + 领域知识 + 模板资源**的组合。比如"按照团队规范做代码审查"、"查阅 LangGraph 最新文档并据此回答"、"生成符合公司格式的技术报告"——这些需要的不是一个工具，而是一整套流程指导。这就是 Skills 要解决的问题。
+工具（Tools）是原子操作——搜索一次、读一个文件、调一次 API。但有些能力需要的不是一次操作，而是**多步骤工作流 + 领域知识 + 模板资源**的组合。比如"按照团队规范做代码审查"、"查阅 LangGraph 最新文档并据此回答"、"生成符合公司格式的技术报告"——这些需要的不是一个工具，而是一整套流程指导。这就是 Skills 要解决的问题。
 
-## Skills 是什么？
+# Skills 是什么？
 
-一个 Skill 就是一个目录，核心是一个 `SKILL.md` 文件，加上可选的脚本、参考文档和模板资源。Skills 遵循开放的 [Agent Skills 规范](https://agentskills.io/specification)（Agent Skills Specification），这不是 Deep Agents 的私有概念，而是一个已被广泛采纳的行业标准。
+一个 Skill 就是一个目录，核心是一个 `SKILL.md` 文件，加上可选的脚本、参考文档和模板资源。Skills 遵循开放的 Agent Skills 规范（`https://agentskills.io/specification`）（Agent Skills Specification），这不是 Deep Agents 的私有概念，而是一个已被广泛采纳的行业标准。
 
 截至 2026 年，**30+ 个主流 AI 开发工具**已采用 Agent Skills 规范：
 
@@ -17,10 +17,11 @@
 
 这意味着：编写一个 Skill，可以在所有兼容产品中使用。团队积累的领域知识不再锁定在某个工具里。
 
-> 类比：Skills 之于 AI Agent，就像 npm 包之于 Node.js——一个标准化的能力分发和复用机制。
+类比：Skills 之于 AI Agent，就像 npm 包之于 Node.js——一个标准化的能力分发和复用机制。
 
-> **图示**：Agent Skills 生态：30+ 个主流 AI 开发工具已采用这一开放标准
-### 规范定义的目录结构
+**图示**：Agent Skills 生态：30+ 个主流 AI 开发工具已采用这一开放标准
+
+## 规范定义的目录结构
 
 ```
 skills/
@@ -43,11 +44,11 @@ skills/
 | `references/` | 详细参考文档（API 模式、风格指南等） | Agent 需要深入信息时按需读取 |
 | `assets/` | 模板、数据文件、schema 等静态资源 | Agent 需要时按需读取 |
 
-## SKILL.md 的结构
+# SKILL.md 的结构
 
 每个 Skill 的核心是 `SKILL.md` 文件，由两部分组成：**YAML frontmatter**（元数据）和 **Markdown body**（指令正文）。
 
-### YAML Frontmatter
+## YAML Frontmatter
 
 Frontmatter 定义了 Skill 的身份和约束条件。规范定义的字段如下：
 
@@ -60,7 +61,7 @@ Frontmatter 定义了 Skill 的身份和约束条件。规范定义的字段如�
 | `metadata` | No | 任意键值对（author、version、entrypoint 等） |
 | `allowed-tools` | No | 空格分隔的预授权工具列表 |
 
-### Markdown Body
+## Markdown Body
 
 Frontmatter 之后是 Markdown 格式的详细指令。这是 Agent 被激活该 Skill 后实际执行的"剧本"。
 
@@ -94,7 +95,7 @@ Based on the question, identify 2-4 most relevant documentation URLs from the in
 Use the fetch_url tool to read the selected documentation URLs, then answer the user's question.
 ```
 
-### description 是最重要的字段
+## description 是最重要的字段
 
 Agent 选择 Skill 的唯一依据就是 `description` 字段——它不会提前读取正文内容。因此，description 的质量直接决定了 Skill 是否能被正确匹配。
 
@@ -120,12 +121,13 @@ description: 处理各种任务。
 
 差的 description 会导致两种问题：该用时匹配不到（漏召回），不该用时被错误触发（误召回）。
 
-## Progressive Disclosure：渐进式加载
+# Progressive Disclosure：渐进式加载
 
 Skills 最关键的设计决策是 **Progressive Disclosure（渐进式披露）**——不是一次性把所有内容塞给 Agent，而是分三个层级逐步加载：
 
-> **图示**：Skill 的三层加载结构：元数据 → 核心指令 → 辅助资源，越往下越详细、加载越晚
-### 三级加载机制
+**图示**：Skill 的三层加载结构：元数据 → 核心指令 → 辅助资源，越往下越详细、加载越晚
+
+## 三级加载机制
 
 | 层级 | 加载内容 | 加载时机 | 处理者 |
 |---|---|---|---|
@@ -141,9 +143,9 @@ Skills 最关键的设计决策是 **Progressive Disclosure（渐进式披露）
 
 - **执行阶段**：Agent 按照正文中的指令工作。如果指令中引用了 `references/` 或 `assets/` 下的文件，Agent 自行决定是否读取——这一步由 LLM 控制，不再由中间件干预。
 
-### 匹配流程示例
+## 匹配流程示例
 
-> **图示**：Progressive Disclosure：启动阶段注入元数据，Agent 判断相关后读取 SKILL.md 正文
+**图示**：Progressive Disclosure：启动阶段注入元数据，Agent 判断相关后读取 SKILL.md 正文
 图中的“只读 frontmatter”指启动时仅将元数据放进模型上下文；扫描阶段仍会读取文件以解析元数据。
 
 ```
@@ -156,7 +158,7 @@ Agent 思考：
   - 按照指令执行：fetch_url → 选择文档 → 阅读 → 回答
 ```
 
-### 为什么这样设计
+## 为什么这样设计
 
 三个好处：
 
@@ -164,12 +166,13 @@ Agent 思考：
 2. **精准匹配**：只有当前任务真正需要的 Skill 才会被加载，避免无关指令干扰 LLM 的判断
 3. **无限扩展**：Skill 数量从 5 个增长到 50 个，启动开销只是线性增加几十条 description，不会触及上下文窗口瓶颈
 
-## 使用方式
+# 使用方式
 
 Skills 的加载方式取决于你使用的 Backend。Deep Agents 提供三种 Backend，各自对应不同的文件存储策略。下面逐一演示。
 
-> **图示**：Skills 的三种存储后端
-### 基本用法（FilesystemBackend）
+**图示**：Skills 的三种存储后端
+
+## 基本用法（FilesystemBackend）
 
 FilesystemBackend 直接从本地磁盘读取 Skills 文件，适合本地开发和 CLI 场景：
 
@@ -199,7 +202,7 @@ result = agent.invoke(
 - 本地磁盘后端建议显式传入 `virtual_mode=True`，与第 3 章的路径沙箱说明保持一致
 - 当多个路径中存在同名 Skill 时，**后面的覆盖前面的**（last wins）
 
-### StateBackend：通过 state 注入 Skills
+## StateBackend：通过 state 注入 Skills
 
 StateBackend 将文件存储在 LangGraph 的 agent state 中。适合无磁盘环境（如 serverless 部署）或需要动态注入 Skill 内容的场景：
 
@@ -245,7 +248,7 @@ result = agent.invoke(
 - 必须使用 `create_file_data()` 格式化内容——直接传入原始字符串会报错
 - Skill 文件通过 `invoke` 的 `files` 参数注入，每次调用都需要传入
 
-### StoreBackend：跨线程持久化
+## StoreBackend：跨线程持久化
 
 StoreBackend 使用 LangGraph Store 进行持久化存储。与 StateBackend 的关键区别在于：文件只需写入一次，所有线程都能访问。
 
@@ -289,7 +292,7 @@ result = agent.invoke(
 - `namespace` 参数是一个函数，接收 runtime config 并返回命名空间元组
 - 适合生产环境中多用户、多线程共享 Skills 的场景
 
-### 多源 Skills 与优先级
+## 多源 Skills 与优先级
 
 你可以从多个目录加载 Skills。当同名 Skill 出现在多个源中时，**列表中后面的覆盖前面的**（last wins）：
 
@@ -317,7 +320,7 @@ agent = create_deep_agent(
 | 团队级 | `/skills/team/` | 团队工作流、Code Review 标准 |
 | 项目级 | `/skills/project/` | 项目特定的部署流程、测试策略 |
 
-### 运行时动态加载
+## 运行时动态加载
 
 `skills` 参数是一个普通的 Python 列表，这意味着你可以在运行时动态构造它。典型场景：根据用户角色、租户或请求类型加载不同的 Skill 集合。
 
@@ -346,16 +349,16 @@ def create_agent_for_user(user_role: str):
 
 这种模式的好处是：Agent 只加载与当前任务相关的 Skills，既节省 token 又减少误匹配。
 
-## Skills 与子 Agent
+# Skills 与子 Agent
 
-> **图示**：子 Agent 的 Skills 继承规则
+**图示**：子 Agent 的 Skills 继承规则
 Deep Agents 支持多 Agent 协作，Skills 在主 Agent 与子 Agent 之间的继承规则如下：
 
 - **通用子 Agent（General-Purpose Subagent）**：自动继承主 Agent 的所有 Skills，无需额外配置。
 - **自定义子 Agent**：不继承主 Agent 的 Skills，必须在定义时通过 `skills` 字段显式指定。
 - **Skill 状态完全隔离**：每个 Agent 拥有独立的 Skill 状态空间，一个 Agent 对 Skill 文件的修改不会影响其他 Agent。
 
-> **示意片段**：`web_search` 代表应用自行实现并注册的搜索工具，`/skills/...` 代表项目中的实际 Skill 目录；代码重点是主 Agent 与自定义子 Agent 的 Skills 继承边界。
+**示意片段**：`web_search` 代表应用自行实现并注册的搜索工具，`/skills/...` 代表项目中的实际 Skill 目录；代码重点是主 Agent 与自定义子 Agent 的 Skills 继承边界。
 
 ```python
 from deepagents import create_deep_agent
@@ -379,20 +382,20 @@ agent = create_deep_agent(
 
 这种设计的好处是职责清晰：研究型子 Agent 不需要也不应该接触主 Agent 的编排类 Skill；同时状态隔离保证了并发执行时不会出现竞态条件。
 
-## Skill 权限控制
+# Skill 权限控制
 
-> **图示**：Skill 权限控制：共享 + 个人分层
+**图示**：Skill 权限控制：共享 + 个人分层
 生产环境中，Skill 的权限管理需要关注三个维度：
 
 1. **可见性（Visibility）**：Agent 能否发现和读取某个 Skill。
 2. **写入权限（Write Access）**：Agent 能否修改 Skill 文件内容。
 3. **审批流程（Approval）**：写入操作是否需要人类确认。
 
-### 只读 Skills（企业知识库场景）
+## 只读 Skills（企业知识库场景）
 
 企业场景中，运维团队维护一套经过审核的 Skill 库，Agent 只能读取和执行，不能擅自修改。使用 `FilesystemPermission` 配合 `CompositeBackend` 实现：
 
-这里的目标是“允许读取 `/skills/**`，拒绝写入”，而不是关闭全部文件能力。规则顺序、默认允许与旁路边界见[第 11 章：文件系统权限](../09.沙箱与权限/02.文件系统权限.md)。
+这里的目标是“允许读取 `/skills/**`，拒绝写入”，而不是关闭全部文件能力。规则顺序、默认允许与旁路边界见第 11 章：文件系统权限。
 
 ```python
 from dataclasses import dataclass
@@ -402,16 +405,13 @@ from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from deepagents.backends.utils import create_file_data
 from langgraph.store.memory import InMemoryStore
 
-
 @dataclass(frozen=True)
 class TenantContext:
     org_id: str
 
-
 def org_skill_namespace(rt):
     org_id = getattr(rt.context, "org_id", "default-org")
     return ("curated-skills", org_id)
-
 
 store = InMemoryStore()
 store.put(
@@ -464,7 +464,7 @@ agent.invoke(
 )
 ```
 
-### 写入需审批（interrupt 模式）
+## 写入需审批（interrupt 模式）
 
 某些场景下，允许 Agent 提出修改建议，但需要人类审批后才能生效。`mode="interrupt"` 提供了这种人在回路（human-in-the-loop）的能力：
 
@@ -494,7 +494,7 @@ agent = create_deep_agent(
 - 此功能需要 `deepagents>=0.6.8`。
 - 在 LangGraph Studio 中，interrupt 会自动渲染为审批 UI；API 调用时需要客户端轮询状态并提交审批结果。
 
-### 共享 + 个人 Skills 分层
+## 共享 + 个人 Skills 分层
 
 实际部署中，最常见的模式是两层结构：团队共享的只读 Skill 库 + 用户个人的可写 Skill 空间。
 
@@ -504,24 +504,20 @@ from dataclasses import dataclass
 from deepagents import FilesystemPermission, create_deep_agent
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 
-
 @dataclass(frozen=True)
 class TenantContext:
     org_id: str
     user_id: str
 
-
 def shared_skill_namespace(rt):
     org_id = getattr(rt.context, "org_id", "default-org")
     return ("curated-skills", org_id)
-
 
 def personal_skill_namespace(rt):
     if rt.server_info and rt.server_info.user:
         return ("user-skills", rt.server_info.user.identity)
     user_id = getattr(rt.context, "user_id", "local-user")
     return ("user-skills", user_id)
-
 
 agent = create_deep_agent(
     model="anthropic:claude-sonnet-4-6",
@@ -556,12 +552,12 @@ agent = create_deep_agent(
 
 **同名覆盖规则**：当共享库和个人空间存在同名 Skill 时，采用 last-wins 策略——`skills` 列表中靠后的路径优先级更高。上例中 `/skills/personal/` 排在后面，因此个人版本会覆盖共享版本。这允许用户基于共享 Skill 做个性化调整，而不影响其他用户。
 
-## 用 Skills 执行代码
+# 用 Skills 执行代码
 
-> **图示**：Skills 代码执行的两种模式
+**图示**：Skills 代码执行的两种模式
 Skills 不仅能提供文本指令，还能包含**可执行代码**。Deep Agents 支持两种代码执行模式：沙箱脚本和解释器技能。
 
-### 沙箱脚本（Sandbox Scripts）
+## 沙箱脚本（Sandbox Scripts）
 
 Skills 可以在 `scripts/` 目录下包含可执行脚本。Agent 可以从任何后端**读取**脚本内容，但要**执行**脚本，则需要一个支持沙箱执行的后端（如 DaytonaSandbox）。
 
@@ -601,11 +597,11 @@ Search arXiv for papers matching the user's query.
 
 这种模式适合需要运行数据处理、API 调用、文件转换等任务的场景，同时保证了执行的安全隔离。
 
-### 解释器技能（Interpreter Skills）
+## 解释器技能（Interpreter Skills）
 
 解释器技能将 Skill 中的代码模块暴露给 Agent 的代码解释器环境。Agent 可以直接 `import` 经过测试的辅助函数，而不必每次都重新生成逻辑。
 
-> 运行前提：Interpreter Skills 需要安装 QuickJS 中间件，例如 `pip install -U "deepagents[quickjs]"` 或 `uv add "deepagents[quickjs]"`。官方文档要求 `langchain-quickjs>=0.2.0` 且 Python `>=3.11`。解释器运行在 QuickJS 内存环境中，适合导入确定性的 JS/TS helper；如果需要执行 Shell、安装包或访问完整文件系统，应使用沙箱后端。解释器、PTC 与状态生命周期见[第 15 章：Interpreters](../13.解释器/解释器.md)。
+运行前提：Interpreter Skills 需要安装 QuickJS 中间件，例如 `pip install -U "deepagents[quickjs]"` 或 `uv add "deepagents[quickjs]"`。官方文档要求 `langchain-quickjs>=0.2.0` 且 Python `>=3.11`。解释器运行在 QuickJS 内存环境中，适合导入确定性的 JS/TS helper；如果需要执行 Shell、安装包或访问完整文件系统，应使用沙箱后端。解释器、PTC 与状态生命周期见第 15 章：Interpreters。
 
 要让一个 Skill 可被导入，需要三步配置：
 
@@ -682,7 +678,7 @@ agent = create_deep_agent(
 
 解释器技能的优势在于**确定性**——经过测试的函数不会因为 LLM 重新生成而出现偏差，同时也节省了 token（Agent 只需要写一行 import 而不是几十行实现代码）。
 
-## Skills、Memory 与 Tools 对比
+# Skills、Memory 与 Tools 对比
 
 Skills、Memory（`AGENTS.md`）和 Tools 是 Deep Agents 中三种不同的能力注入方式。它们服务于不同的目的：
 
@@ -702,11 +698,11 @@ Skills、Memory（`AGENTS.md`）和 Tools 是 Deep Agents 中三种不同的能�
 
 值得注意的是，Skills 和 Memory 处于一个**连续光谱**上。Agent 可以在工作过程中更新自己的 Skills（就像更新记忆一样），因此 Skills 也可以充当**渐进式披露的记忆**——只在需要时才加载的领域知识库。
 
-## 编写高效 Skills 的最佳实践
+# 编写高效 Skills 的最佳实践
 
 根据 Agent Skills 规范和实践经验，以下是编写高质量 Skills 的指南：
 
-### 1. Frontmatter 保持精简
+## 1. Frontmatter 保持精简
 
 Frontmatter 中的 `description` 是 Agent 决定是否使用此 Skill 的唯一依据。写得具体、准确，避免泛泛而谈。
 
@@ -722,7 +718,7 @@ description: 当用户询问 LangGraph 的节点定义、状态管理、中断�
 description: 帮助用户解决编程问题。
 ```
 
-### 2. SKILL.md 正文控制在 5000 tokens / 500 行以内
+## 2. SKILL.md 正文控制在 5000 tokens / 500 行以内
 
 正文指令应当聚焦核心流程。超出部分应拆分到 `references/` 目录：
 
@@ -737,7 +733,7 @@ skills/
 
 在 `SKILL.md` 中引用这些文件，Agent 会在需要时按需加载。
 
-### 3. 为 Agent 而非人类写结构
+## 3. 为 Agent 而非人类写结构
 
 Agent 擅长执行清晰的步骤化指令。Skill 内容应当包含：
 
@@ -746,7 +742,7 @@ Agent 擅长执行清晰的步骤化指令。Skill 内容应当包含：
 - **输入/输出示例**：展示期望的输入格式和输出格式
 - **边界情况处理**：常见异常如何应对
 
-### 4. 管控 Skill 数量
+## 4. 管控 Skill 数量
 
 少量定义清晰的 Skills 优于大量定义模糊的 Skills。当 Skill 数量过多时：
 
@@ -755,7 +751,7 @@ Agent 擅长执行清晰的步骤化指令。Skill 内容应当包含：
 
 建议：定期审查 Skills 列表，合并重叠的、删除过时的、拆分过大的。
 
-## 小结
+# 小结
 
 本章我们深入学习了 Deep Agents 的 Skills 机制，核心要点：
 
@@ -769,11 +765,8 @@ Agent 擅长执行清晰的步骤化指令。Skill 内容应当包含：
 
 下一章，我们将学习长期记忆——让 Agent 拥有跨对话、跨会话的持久化记忆。
 
----
+# 参考资料
 
-## 相关资源
-
-- **原文**：[第 7 章：Skills — 可复用的 Agent 能力包](https://datawhalechina.github.io/deepagents-in-action/chapters/ch07-skills/)（发布 2026-06-11）
-- **视频**：[Lec 09: Skills（上）— 从概念到上手（B站）](https://www.bilibili.com/video/BV1XsEi6qEA6/) ｜ [小红书](http://xhslink.com/o/9kCnyTUYTr4)
-- **视频**：[Lec 10: Skills（下）— 高级用法（B站）](https://www.bilibili.com/video/BV1gDjV6eEXA/) ｜ [小红书](http://xhslink.com/o/4rUB8JZwK2i)
-- **说明**：详细摘录笔记，保留原文章节结构、代码与表格；原文配图以「图示」文字摘要替代；章间引用为本地笔记相对链接
+- 原文：第 7 章：Skills — 可复用的 Agent 能力包（`https://datawhalechina.github.io/deepagents-in-action/chapters/ch07-skills/`）（发布 2026-06-11）
+- 视频：Lec 09: Skills（上）— 从概念到上手（B站）（`https://www.bilibili.com/video/BV1XsEi6qEA6/`） ｜ 小红书（`http://xhslink.com/o/9kCnyTUYTr4`）
+- 视频：Lec 10: Skills（下）— 高级用法（B站）（`https://www.bilibili.com/video/BV1gDjV6eEXA/`） ｜ 小红书（`http://xhslink.com/o/4rUB8JZwK2i`）
