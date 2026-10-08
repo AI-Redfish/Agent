@@ -158,75 +158,92 @@ Client ──spawn──▶ Agent 子进程
 实测可用（0.12.1）。演示一轮 prompt 里的完整动作序列：思考 → 工具调用生命周期 → 权限审批 → 请客户端代写文件 → 流式回复。
 
 ```python
-# demo_agent.py
+# demo_agent.py —— Agent 侧：实现 acp.Agent 协议基类，被客户端当子进程拉起
 import asyncio
 import itertools
 from typing import Any
 
 from acp import (
-    PROTOCOL_VERSION, Agent, InitializeResponse, NewSessionResponse, PromptResponse,
-    run_agent, start_tool_call, start_edit_tool_call,
-    update_agent_message_text, update_agent_thought_text, update_tool_call,
+    PROTOCOL_VERSION,            # 当前协议版本常量 = 1
+    Agent,                       # Agent 侧 Protocol：实现 initialize/new_session/prompt/... 即为一个 ACP Agent
+    InitializeResponse, NewSessionResponse, PromptResponse,
+    run_agent,                   # 入口：把 agent 挂到 stdin/stdout 上跑 JSON-RPC，阻塞直至断连
+    start_tool_call, start_edit_tool_call,                  # 工具调用"开始"通知的构造器
+    update_agent_message_text, update_agent_thought_text,   # 回复流 / 思考流 chunk 构造器
+    update_tool_call,                                       # 工具调用"进度"通知的构造器
 )
-from acp.core import AgentSideConnection
+from acp.core import AgentSideConnection   # agent 眼中"客户端的代理"，反向调客户端全靠它（从 acp 顶层导入已弃用）
 from acp.schema import (
-    AllowedOutcome, Implementation, PermissionOption, ToolCallUpdate,
+    AllowedOutcome,              # 审批结果之一：用户选了某个允许项（另一个是 DeniedOutcome）
+    Implementation,              # name/version 元信息（握手里互报身份）
+    PermissionOption,            # 审批选项（kind: allow_once / reject_once / ...）
+    ToolCallUpdate,              # schema 模型：request_permission 的 tool_call 参数要用它
 )
 
-_ids = itertools.count(1)
+_ids = itertools.count(1)        # 全局自增 ID：session_id / tool_call_id 都从这里取，保证唯一
 
 class DemoAgent(Agent):
-    def __init__(self) -> None:
-        self.conn: AgentSideConnection | None = None   # 反向调用客户端的句柄
-        self.turns: dict[str, int] = {}
+    """最小可用的 ACP Agent：一轮 prompt 里演示思考流 → 工具调用 → 审批 → fs 代管 → 流式回复。"""
 
+    def __init__(self) -> None:
+        self.conn: AgentSideConnection | None = None   # 反向调用客户端的句柄（on_connect 时注入）
+        self.turns: dict[str, int] = {}                # 每个会话的轮数（会话状态只在内存，进程死了就丢）
+
+    # 连接建立时由 SDK 自动回调；保存 conn 后才能反向调用客户端
     def on_connect(self, conn: AgentSideConnection) -> None:
         self.conn = conn
 
-    # ---- 生命周期 ----
+    # ---- 生命周期：每个进程只调一次（握手）----
     async def initialize(self, protocol_version: int, **kwargs: Any) -> InitializeResponse:
+        # 入参还有 client_capabilities / client_info（客户端是谁、能代做什么）
+        # 这里回应：我支持的协议版本 + 我是谁。要支持 load session，需在此声明 agent_capabilities.load_session=True
         return InitializeResponse(
             protocol_version=PROTOCOL_VERSION,
             agent_info=Implementation(name="demo-agent", version="0.1.0"),
         )
 
+    # ---- 生命周期：每个对话调一次；此后客户端所有请求都带着返回的 session_id ----
     async def new_session(self, cwd: str, **kwargs: Any) -> NewSessionResponse:
         sid = f"s{next(_ids)}"
-        self.turns[sid] = 0
+        self.turns[sid] = 0                            # 初始化该会话的业务状态
         return NewSessionResponse(session_id=sid)
 
-    # ---- 核心业务 ----
+    # ---- 核心业务：客户端每发一条消息调一次 ----
     async def prompt(self, session_id: str, prompt: list[Any], **kwargs: Any) -> PromptResponse:
         conn = self.conn
+        # prompt 是 ContentBlock 列表（text/image/audio/...），这里只取文本块拼接
         text = "".join(b.text for b in prompt if b.type == "text")
         self.turns[session_id] += 1
 
-        # 1) 思考流（agent_thought_chunk）
+        # 1) 思考流（agent_thought_chunk）：客户端渲染成"思考中"区域，区别于正式回复
         await conn.session_update(session_id, update_agent_thought_text(f"分析输入: {text}"))
 
-        # 2) 工具调用：pending -> in_progress -> completed
+        # 2) 工具调用生命周期：pending -> in_progress -> completed（客户端渲染成工具卡片）
         tc = f"tc{next(_ids)}"
         await conn.session_update(
-            session_id, start_tool_call(tc, "检索相关代码", kind="search", status="pending"))
+            session_id, start_tool_call(tc, "检索相关代码", kind="search", status="pending"))  # kind 决定图标
         await conn.session_update(session_id, update_tool_call(tc, status="in_progress"))
         # ...这里做真实的检索/LLM 调用...
         await conn.session_update(session_id,
-            update_tool_call(tc, status="completed", raw_output={"matches": 3}))
+            update_tool_call(tc, status="completed", raw_output={"matches": 3}))   # raw_output 供 UI 展开查看
 
-        # 3) 敏感操作：先声明 tool_call，再请求审批
+        # 3) 敏感操作（写文件）：先声明 tool_call 给 UI 一个"载体"，再发审批请求
         edit_tc = f"tc{next(_ids)}"
+        # start_edit_tool_call：kind=edit 快捷版，自动填 locations(path) + raw_input
         await conn.session_update(session_id,
             start_edit_tool_call(edit_tc, "写入笔记 note.txt", "note.txt", text))
+        # request_permission 是反向请求：await 挂起，直到用户在客户端 UI 里做出选择
         decision = await conn.request_permission(
             session_id,
-            ToolCallUpdate(tool_call_id=edit_tc, title="写入笔记", kind="edit"),
+            ToolCallUpdate(tool_call_id=edit_tc, title="写入笔记", kind="edit"),   # 注意：这里用 schema 的 ToolCallUpdate
             options=[
                 PermissionOption(option_id="allow_once", name="允许一次", kind="allow_once"),
                 PermissionOption(option_id="reject_once", name="拒绝",   kind="reject_once"),
             ],
         )
+        # 判别联合：AllowedOutcome(outcome="selected", option_id=...) / DeniedOutcome(outcome="cancelled")
         if isinstance(decision.outcome, AllowedOutcome):
-            # 4) 审批通过 -> 请客户端代写文件（fs/write_text_file）
+            # 4) 审批通过 -> 请客户端代写文件（fs/write_text_file）：agent 进程不碰磁盘，落盘发生在客户端侧
             await conn.write_text_file(session_id, "note.txt", f"note: {text}\n")
             await conn.session_update(session_id, update_tool_call(edit_tc, status="completed"))
             note = "已写入"
@@ -234,19 +251,21 @@ class DemoAgent(Agent):
             await conn.session_update(session_id, update_tool_call(edit_tc, status="failed"))
             note = "被拒绝"
 
-        # 5) 消息流式输出（agent_message_chunk，逐字推送）
+        # 5) 正式回复：agent_message_chunk 逐字推送，客户端边收边渲染（打字机效果）
         reply = f"echo: {text} | {note} | 第 {self.turns[session_id]} 轮"
         for ch in reply:
             await conn.session_update(session_id, update_agent_message_text(ch))
-            await asyncio.sleep(0.005)
+            await asyncio.sleep(0.005)                 # 仅为演示流式效果
 
+        # 返回值就是 session/prompt 的响应；客户端 SDK 保证处理完全部 in-flight 通知后才收这个响应
         return PromptResponse(stop_reason="end_turn")
 
+    # 通知（无响应）：用户点了"停止"按钮；真实项目应在这里取消 in-flight 的 LLM/工具任务
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
-        # 真实项目：取消 in-flight 的 LLM/工具任务
         pass
 
 if __name__ == "__main__":
+    # 在 stdin/stdout 上跑 JSON-RPC；进程退出 = 内存里的会话全部消失（见"生命周期"）
     asyncio.run(run_agent(DemoAgent()))
 ```
 
@@ -262,7 +281,7 @@ if __name__ == "__main__":
 不打开编辑器，用自己的代码驱动 agent 子进程——适合自动化、测试、桥接服务。
 
 ```python
-# driver.py
+# driver.py —— Client 侧：把任意 ACP Agent 当子进程"当库调用"
 import asyncio
 import sys
 from pathlib import Path
@@ -275,26 +294,30 @@ from acp.schema import (
 )
 
 class HeadlessClient(Client):
-    """打印所有更新；权限自动放行；fs 真实执行。"""
+    """无界面客户端：下面的方法都是被 agent"反向调用"的——
+    session_update 收流式更新，request_permission 响应审批，fs/* 代 agent 读写文件。"""
 
+    # agent 发来的所有 session/update 通知都进这里；update 用判别字段区分 13 种类型
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
-        tag = update.session_update          # 判别字段
-        if tag == "agent_message_chunk":
+        tag = update.session_update          # 判别字段："agent_message_chunk" / "tool_call" / ...
+        if tag == "agent_message_chunk":     # 正式回复流
             print(update.content.text, end="", flush=True)
-        elif tag == "agent_thought_chunk":
+        elif tag == "agent_thought_chunk":   # 思考流
             print(f"[think] {update.content.text}")
-        elif tag in ("tool_call", "tool_call_update"):
+        elif tag in ("tool_call", "tool_call_update"):   # 工具调用生命周期
             print(f"[tool] {update.tool_call_id} {update.status}")
         else:
-            print(f"[{tag}] {update}")
+            print(f"[{tag}] {update}")       # plan / available_commands / usage_update 等其余类型
 
+    # agent 请求权限审批（反向请求）。headless 场景：自动选第一个 allow 项放行
     async def request_permission(self, session_id: str, tool_call: Any,
                                  options: list[PermissionOption], **kwargs: Any
                                  ) -> RequestPermissionResponse:
         allow = next(o for o in options if o.kind.startswith("allow"))
         return RequestPermissionResponse(
-            outcome=AllowedOutcome(outcome="selected", option_id=allow.option_id))
+            outcome=AllowedOutcome(outcome="selected", option_id=allow.option_id))  # 拒绝则 DeniedOutcome("cancelled")
 
+    # agent 反向请求读文件（fs/read_text_file）：真实实现；line 从 1 计、limit 限行数
     async def read_text_file(self, session_id: str, path: str,
                              line: int | None = None, limit: int | None = None,
                              **kwargs: Any) -> ReadTextFileResponse:
@@ -303,6 +326,7 @@ class HeadlessClient(Client):
             lines = lines[line - 1: line - 1 + (limit or len(lines))]
         return ReadTextFileResponse(content="".join(lines))
 
+    # agent 反向请求写文件（fs/write_text_file）：真实落盘（文件读写都在客户端进程发生）
     async def write_text_file(self, session_id: str, path: str,
                               content: str, **kwargs: Any) -> None:
         Path(path).write_text(content, encoding="utf-8")
@@ -311,30 +335,32 @@ class HeadlessClient(Client):
     # （agent 握手时会看 clientCapabilities，未声明的能力不会被请求）
 
 async def main() -> None:
+    # 拉起 agent 子进程并把 stdio 接上；退出时自动优雅关停（conn.close → 关 stdin → 等待 → terminate → kill）
     async with spawn_agent_process(
         HeadlessClient(),
-        sys.executable, "demo_agent.py",
-        env={},                       # 注意: 默认环境是裁剪过的，见坑点
+        sys.executable, "demo_agent.py",     # Windows 下显式传解释器，直接传 .py 脚本报 WinError 193
+        env={},                              # 注意: 默认环境是裁剪过的白名单（default_environment），{} 表示不额外追加
     ) as (agent, process):
-        # 1) 握手
+        # agent 是 ClientSideConnection：方法名与协议方法一一对应，像调本地库一样调远程子进程
+        # 1) 握手：报协议版本 + 我（客户端）有哪些能力
         info = await agent.initialize(
             protocol_version=1,
             client_capabilities=ClientCapabilities(
-                fs=FileSystemCapabilities(read_text_file=True, write_text_file=True),
-                terminal=False,
+                fs=FileSystemCapabilities(read_text_file=True, write_text_file=True),  # 声明 fs 能力，agent 才会反向调
+                terminal=False,              # 不支持终端 → agent 不应发 terminal/create
             ),
             client_info=Implementation(name="my-client", version="0.1.0"),
         )
         print(f"agent={info.agent_info.name} protocol=v{info.protocol_version}")
 
-        # 2) 开会话
+        # 2) 开会话：拿 session_id；响应里还带 modes / config_options 可供后续切换
         session = await agent.new_session(cwd=".")
         sid = session.session_id
 
-        # 3) 多轮对话
+        # 3) 多轮对话：同一个 session_id 反复 prompt；prompt 返回时所有流式通知已处理完
         for user_input in ["你好，ACP", "第二轮对话"]:
             resp = await agent.prompt(sid, [text_block(user_input)])
-            print(f"\n-> stop_reason={resp.stop_reason}")
+            print(f"\n-> stop_reason={resp.stop_reason}")   # end_turn / max_tokens / refusal / ...
 
 asyncio.run(main())
 ```
@@ -367,11 +393,14 @@ echo: 你好，ACP | 已写入 | 第 1 轮
 
 ```python
 async def prompt(self, session_id, prompt, **kwargs):
+    # 单轮 prompt = 一次 LLM 流式调用 + 一串 session_update 推流
     conn = self.conn
-    text = "".join(b.text for b in prompt if b.type == "text")
+    text = "".join(b.text for b in prompt if b.type == "text")   # 提取文本块（多模态块自行扩展）
 
-    # 思考流: LLM 的 reasoning 增量 -> update_agent_thought_text
-    async for delta in llm.stream(text):          # 伪代码: 任何异步生成器
+    # 两种流式输出的分派：
+    #   思考流: LLM 的 reasoning 增量 -> agent_thought_chunk（UI 渲染为"思考中"区域）
+    #   回复流: 正文增量            -> agent_message_chunk（打字机效果）
+    async for delta in llm.stream(text):          # 伪代码: 任何异步生成器（OpenAI/Anthropic SDK 皆可）
         if delta.is_reasoning:
             await conn.session_update(session_id, update_agent_thought_text(delta.text))
         else:
@@ -380,13 +409,14 @@ async def prompt(self, session_id, prompt, **kwargs):
         # 工具调用: LLM 请求调用工具时
         if delta.tool_call:
             tc = delta.tool_call.id
+            # 先发 start 让 UI 有载体（工具卡片）；kind 按语义选 read/edit/search/execute...
             await conn.session_update(session_id,
                 start_tool_call(tc, delta.tool_call.name, kind="other", status="pending"))
-            result = await self._run_tool(delta.tool_call)     # 内置工具自己执行
+            result = await self._run_tool(delta.tool_call)     # 内置只读工具自己执行；写操作应先走 request_permission
             await conn.session_update(session_id,
-                update_tool_call(tc, status="completed", raw_output=result))
+                update_tool_call(tc, status="completed", raw_output=result))   # raw_output 给 UI 展示
 
-    return PromptResponse(stop_reason="end_turn")
+    return PromptResponse(stop_reason="end_turn")   # 取值还有 max_tokens / refusal / cancelled ...
 ```
 
 现成参考：SDK 仓库 `examples/` 有流式、权限、Gemini 桥接等可运行示例；`acp.contrib` 提供：
@@ -433,7 +463,8 @@ from acp import spawn_agent_process, text_block
 # from acp.schema import ...   # 同案例二的 HeadlessClient 定义
 
 AGENTS = {
-    "claude": ["cmd", "/c", "claude-code-acp"],   # Windows: npm 的 .cmd 必须 cmd /c 包装
+    # Windows: npm 全局安装的是 .cmd 批处理，不能直接 exec，必须 cmd /c 包装
+    "claude": ["cmd", "/c", "claude-code-acp"],
     "codex":  ["cmd", "/c", "codex-acp"],
     "pi":     ["cmd", "/c", "pi-acp"],
     # Linux/macOS 直接写可执行文件名: ["claude-code-acp"]
@@ -441,13 +472,16 @@ AGENTS = {
 
 async def main():
     cmd = AGENTS[sys.argv[1]]
+    # 同一套客户端代码接任何 agent：spawn → initialize → new_session → prompt，四步走
     async with spawn_agent_process(HeadlessClient(), *cmd, cwd=".") as (agent, _):
-        info = await agent.initialize(protocol_version=1)
+        info = await agent.initialize(protocol_version=1)   # 不传 capabilities = 最简能力集
         print(f"agent={info.agent_info.title}")
 
+        # new_session 响应里的 modes：各家"权限/沙箱/思考档位"的 ACP 映射，可用 set_session_mode 切换
         session = await agent.new_session(cwd=".")
         print(f"modes={[m.id for m in session.modes.available_modes]}")
 
+        # prompt 返回前已收完全部流式更新（思考流/消息流都打印完了）
         resp = await agent.prompt(session.session_id, [text_block("Reply with exactly one word: pong")])
         print(f"stop_reason={resp.stop_reason}")
 
