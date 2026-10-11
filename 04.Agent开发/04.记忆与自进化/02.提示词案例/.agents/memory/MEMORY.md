@@ -47,6 +47,7 @@
 
 **流程**：检索 → 读 `SKILL.md` → 过 `.agents/prompts/skillguard.md` 扫描 → 写入 `.agents/skills/<名称>/`（`SKILL.md` 里记下来源 URL）。
 **只装运行必需文件。首次安装前向用户确认。**
+**沉淀或完善技能，交给 `skill-creator-plus` 走流程**——它是造技能的元技能（评审门 ≥95% + 测试门）。**不要自己手写 skill 骨架。**
 
 **维护手段**：宿主提供 `skill_create` / `skill_patch` / `skill_delete` / `skill_write_file` / `skill_delete_file`。写操作一律限定在 `.agents/skills/<名称>/` 内，不允许越界写；落盘前过扫描。**删除技能走人工确认**（不同于 SkillGuard 命中的自动删除）。
 
