@@ -2,19 +2,27 @@
 
 > 热记忆，每次对话注入。只放索引，不放正文。硬上限 2000 字符。
 
+## 控制入口
+
+会话开始、切换工作空间或重建上下文后检查 `BOOTSTRAP.md`：未执行只问缺项，确认答案落盘并同步索引后标记完成；已完成跳过。`prompts/` 按 `AGENTS.md` 触发，不当作温记忆。`archive/` 仅用户要求恢复／审计时读。
+
 ## 温记忆目录
 
-**稳定型（按需读）**
-- `偏好设置记忆.md` — 按场景生效的偏好 + Markdown 笔记格式规范
-- `用户相关记忆.md` — 用户是谁、背景、风格、习惯
-- `用户反馈记忆.md` — 用户纠正过什么、期望怎么表现
-- `参考文档记忆.md` — 外部资料摘要 + 出处链接
+路径相对 `.agents/memory/`，每项给出读取场景。已读且未变更的正文可在当前上下文内复用。
 
-**演进型（项目任务开始时读）**
-- `项目相关记忆.md` — 本项目约定、环境事实、沉淀输出目录约定
-- `learnings/learnings.md` — 验证过有效的做法
-- `learnings/errors.md` — 踩过的坑 + 原因 + 正确做法
-- `learnings/feature-requests.md` — 现有能力覆盖不到、需要补的东西
+**稳定型**
+- `preferences.md` — 场景偏好／Markdown 规范；写文档、查资料或命中偏好场景前读。
+- `user-profile.md` — 身份、背景、习惯；个性化建议或涉及用户背景前读。
+- `user-feedback.md` — 用户纠正与期望；每个任务开始、用户纠正行为时读。
+- `references.md` — 外部资料摘要与出处；调研、技术选型、复用资料前读。
+
+**演进型**
+- `project.md` — 项目约定、环境、输出目录；项目任务开始及选择命令／沉淀目录前读。
+- `learnings/learnings.md` — 有效做法；选择实现方法、重复操作、技能候选评估前读。
+- `learnings/errors.md` — 坑、原因、正确做法；排错、重试、易错操作前读。
+- `learnings/feature-requests.md` — 能力缺口；需求规划、能力缺口评估、技能检索前读。
+
+新增正文使用英文小写 kebab-case，登记「内容 + 何时读」；控制文件和归档不补为温记忆索引。
 
 ## 冷记忆检索入口
 
@@ -26,11 +34,11 @@
 
 **什么时候搜**：用户提到「之前」「上次」「以前定过」，或当前判断需要历史依据时。
 
-每次检索会自动记一条 `search_log`——这是「同一主题命中 ≥ 3 次就提炼进温记忆」的判定依据。
+检索自动写 `search_log`，轻整理据此判断同主题命中 ≥3 次后的晋级。
 
 ## 技能在哪
 
-**技能不进索引**——数量会长，热记忆的 2000 字符容不下。技能见 `.agents/skills/`，需要时列目录。每个技能自己的来源、适用场景写在它的 `SKILL.md` 里。
+技能不进索引。需要时列 `.agents/skills/`；来源和适用场景见各技能的 `SKILL.md`。
 
 ## Skill 获取协议
 
@@ -45,11 +53,11 @@
 5. https://smithery.ai/skills
 6. Claw Hub
 
-**流程**：检索 → 读 `SKILL.md` → 过 `.agents/prompts/skillguard.md` 扫描 → 写入 `.agents/skills/<名称>/`（`SKILL.md` 里记下来源 URL）。
+**流程**：检索 → 读 `SKILL.md` → 过 `.agents/memory/prompts/skillguard.md` 扫描 → 写入 `.agents/skills/<名称>/`（`SKILL.md` 里记下来源 URL）。
 **只装运行必需文件。首次安装前向用户确认。**
 **沉淀或完善技能，交给 `skill-creator-plus` 走流程**——它是造技能的元技能（评审门 ≥95% + 测试门）。**不要自己手写 skill 骨架。**
 
-**维护手段**：宿主提供 `skill_create` / `skill_patch` / `skill_delete` / `skill_write_file` / `skill_delete_file`。写操作一律限定在 `.agents/skills/<名称>/` 内，不允许越界写；落盘前过扫描。**删除技能走人工确认**（不同于 SkillGuard 命中的自动删除）。
+**维护手段**：宿主提供技能读写工具；写入限定在 `.agents/skills/<名称>/` 内，落盘前过扫描。删除技能须人工确认；安全扫描失败按安全闸门处理。
 
 **主动修补**：
 
