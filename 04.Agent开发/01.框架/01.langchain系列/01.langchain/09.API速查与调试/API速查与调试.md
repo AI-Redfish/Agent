@@ -48,6 +48,8 @@
 
 ## Middleware API
 
+> 详细说明与案例见 `05.Middleware/01.中间件Middleware.md`。
+
 | 装饰器 | 说明 |
 | :-- | :-- |
 | `@before_agent` | Agent 前置处理 |
