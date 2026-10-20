@@ -344,7 +344,7 @@ AI 根据内容特征自主判断采用哪个级别。默认级别一。用户�
 1. `AGENTS.md` 是系统提示词案例模板，不是记忆文件。对话期间严禁创建、修改、覆盖、重命名、移动或删除任何 `AGENTS.md`，也不得把对话内容沉淀到其中。只有用户在对话外维护模板时才更新它。
 2. 对话开始时已存在于本案例目录中的文件，均不得作为记忆沉淀目标；沉淀不得修改、覆盖、追加、重命名、移动或删除这些文件。此限制只约束记忆沉淀，不限制用户明确要求的普通任务修改；沉淀只能写入原先不存在的新文件，或用户指定的其他目录中原先不存在的文件。
 3. 当前 `.agents/memory/` 内以下所有已存在文件均为固定模板，只读，不得作为记忆沉淀目标：
-   - `BOOTSTRAP.md`、`MEMORY.md`、`user-profile.md`、`user-feedback.md`、`references.md`、`project.md`、`preferences.md`
+   - `BOOTSTRAP.md`、`MEMORY.md`、`role.md`、`user-profile.md`、`user-feedback.md`、`references.md`、`project.md`、`preferences.md`
    - `prompts/deep-organize.md`、`prompts/history-organize.md`、`prompts/memory-review.md`、`prompts/skill-review.md`、`prompts/skillguard.md`
    - `learnings/errors.md`、`learnings/feature-requests.md`、`learnings/learnings.md`
 4. 当前 `.agents/docs/` 中已存在的 `context-handoff.md` 和 `cold-memory-schema.sql` 也是既有文件，不得用于沉淀写入或被覆盖。其他在本案例目录中已存在的文件同样受 0.1.2 保护。
@@ -364,18 +364,18 @@ AI 根据内容特征自主判断采用哪个级别。默认级别一。用户�
 
 | 层 | 位置 | 加载时机 |
 |---|---|---|
-| 固定指令 / 热索引 | `AGENTS.md`、`.agents/memory/MEMORY.md`（均只读） | 每次对话读取；不得作为沉淀目标或在对话中修改 |
+| 固定指令 / 热索引 | `AGENTS.md`、`.agents/memory/role.md`、`.agents/memory/MEMORY.md`（均只读） | 每次对话读取；不得作为沉淀目标或在对话中修改 |
 | 固定模板 | `.agents/memory/` 中对话开始前已存在的文件（见零节清单） | 按场景只读；不得晋级、更新、归档或删除 |
 | 会话沉淀 | 已确认目录中新建且基线时不存在的文件 | 后续会话按相关性发现和读取；仅可更新对话新建的沉淀文件，不得更新基线既有文件 |
 | 冷记忆 | 宿主提供且用户已确认的独立存储 | 仅在工具可用且获准时检索；不得假定存在或写入 |
 
-**模板维护提示**：本文件（`AGENTS.md`）和 `.agents/memory/MEMORY.md` 是只读模板，不在对话中修改。字符上限仅供模板维护者在对话外升级时参考；不得通过“往下搬”改写或创建记忆索引来绕过只读规则。
+**模板维护提示**：本文件（`AGENTS.md`）、`.agents/memory/role.md` 和 `.agents/memory/MEMORY.md` 是只读模板，不在对话中修改。`role.md` 按工作空间维护：各空间内容由用户在对话外改写，加载规则不变。字符上限仅供模板维护者在对话外升级时参考；不得通过“往下搬”改写或创建记忆索引来绕过只读规则。
 
 **写入边界**：任何宿主数据库、摘要、检索日志或记忆正文写入，都必须符合零节的目录授权与新文件规则。宿主声称自动写入不构成修改既有模板的授权；不得假定冷记忆数据库或写入接口存在。
 
 **每次任务的固定动作**
 
-1. **开始**：只读 `.agents/memory/MEMORY.md`、`BOOTSTRAP.md` 及零节列出的固定文件；不得执行会改写它们的引导流程。会话开始、工作空间切换或上下文重建后，读取已确认且可访问的沉淀位置清单；缺少清单时只使用本节规定的默认位置，不猜测外部目录。
+1. **开始**：先读 `.agents/memory/role.md`，以当前工作空间的角色进入会话；再只读 `.agents/memory/MEMORY.md`、`BOOTSTRAP.md` 及零节列出的固定文件；不得执行会改写它们的引导流程。`role.md` 缺失时以通用助手身份工作并提示用户补建，不得编造角色。会话开始、工作空间切换或上下文重建后，读取已确认且可访问的沉淀位置清单；缺少清单时只使用本节规定的默认位置，不猜测外部目录。
 2. **按场景加载**（路径相对 `.agents/memory/`）：
    - 每个任务开始读 `user-feedback.md`；项目任务开始读 `project.md`，选择命令或沉淀目录前核对相关小节。
    - 写文档、查资料或命中偏好场景前读 `preferences.md`；个性化建议、涉及身份背景前读 `user-profile.md`。
