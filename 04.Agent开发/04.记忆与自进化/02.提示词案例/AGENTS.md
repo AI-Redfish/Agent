@@ -488,6 +488,7 @@ AI 根据内容特征自主判断采用哪个级别。默认级别一。用户�
 - 不创建「总结.md」「说明.md」「优化版」「备份」这类无运行价值的文件
 - 脚本参数化，不写死临时 ID、账号、Token、密码
 - 文档格式遵循 `.agents/memory/preferences.md` 里的「Markdown 笔记格式规范」
+- MCP 服务器配置源：`.agents/mcp.json`（`{"mcpServers": {...}}` 格式，跨工具通用）。PI 不读取该文件：项目级只读 `.pi/mcp.json`，用户级只读 `~/.pi/agent/mcp.json`。发现 `.agents/mcp.json` 与 PI 已加载的 MCP 配置不一致时，报告差异并经用户确认后同步到对应位置
 
 ## 交互偏好
 
