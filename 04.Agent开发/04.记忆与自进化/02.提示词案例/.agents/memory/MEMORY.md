@@ -4,9 +4,9 @@
 
 ## 控制入口
 
-会话开始、切换工作空间或重建上下文后，先按 `BOOTSTRAP.md` 检查产物输出位置配置。首次使用必须展示 `project.md` 中各类产物的推荐绝对路径，并请用户确认或输入目标位置；也可明确选择暂不启用。所有类型配置完成前，只处理初始化配置，拒绝回答其他问题或执行其他任务。推荐值、用户沉默及跳过要求均不视为确认。
+会话开始、切换工作空间或重建上下文后，读取沉淀路径约定：所有输出与沉淀默认写入当前工作空间 `.agents/` 下对应位置，无需用户确认，不因 Git 仓库或 worktree 改变位置。各类型默认目录见 `project.md` 的「沉淀输出目录约定」。
 
-已确认配置从 `<输出根目录>/.agents/memory-locations.md` 或用户明确指定的配置位置只读加载；本次会话已有的明确确认可直接复用。只追问缺失或冲突项，不重复确认完整配置。输出根目录及保存规则见 `BOOTSTRAP.md`，实际输出按已确认类型映射，其他文件中的路径仅为示例。本文件及引导清单只读，不回写、不改状态。
+仅当用户主动指定其他目录时，目录约定记录在 `.agents/memory-locations.md`；该文件存在时只读加载，按其中列明的例外目录输出。不得扫描未指定、未确认的外部目录。本文件及引导清单只读，不回写、不改状态。
 
 `prompts/` 按 `AGENTS.md` 触发，不当作温记忆。`archive/` 仅用户要求恢复／审计时读。
 
@@ -30,7 +30,7 @@
 
 ## 冷记忆检索入口
 
-历史全文与摘要由宿主在用户确认的位置保存；推荐 `<输出根目录>/.agents/history/memory.db`。仅在宿主提供能力且用户授权后启用，不假定数据库或下列接口已存在。
+冷记忆默认启用：历史全文与摘要保存在当前工作空间 `.agents/history/memory.db`（库按 `.agents/docs/cold-memory-schema.sql` 初始化）。宿主或接口不可用时说明限制，不询问用户、不降级。
 
 - `search_summary(关键词)` — 先搜摘要
 - `search_history(关键词)` — 摘要不够再搜原始历史
@@ -59,7 +59,7 @@
 
 **流程**：检索 → 读 `SKILL.md` → 过 `.agents/memory/prompts/skillguard.md` 扫描 → 写入 `.agents/skills/<名称>/`（`SKILL.md` 里记下来源 URL）。
 **只装运行必需文件。首次安装前向用户确认。**
-**沉淀或完善技能，交给 `skill-creator-plus` 走流程**——它是造技能的元技能（评审门 ≥95% + 测试门）。**不要自己手写 skill 骨架。**
+**沉淀或完善技能，交给 `skill-creator-plus` 走流程**——它是造技能的元技能（评审门 ≥95% + 测试门）。**不要自己手写 skill 骨架。**使用时安装（不预装）：https://github.com/AI-Redfish/skill/tree/main/skills/skill-creator-plus ；官方依赖 `skill-creator`：https://github.com/AI-Redfish/skill/tree/main/skills/skill-creator 。
 
 **维护手段**：宿主提供技能读写工具；写入限定在 `.agents/skills/<名称>/` 内，落盘前过扫描。删除技能须人工确认；安全扫描失败按安全闸门处理。
 
