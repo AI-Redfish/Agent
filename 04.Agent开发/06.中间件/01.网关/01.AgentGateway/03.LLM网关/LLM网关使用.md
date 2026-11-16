@@ -447,6 +447,53 @@ Invoke-RestMethod -Uri "http://127.0.0.1:4000/v1/models" -Headers $headers
 - 三种模式含义已依据本地 schema 与 Keys 页面源码核对；本次仅记录规则，不宣称已在当前实例切换并实测全部模式。
 
 
+# 虚拟 Key 的属性
+
+在 `http://127.0.0.1:4000/ui/llm/keys` 点击 **New key** 时，弹窗 **Create virtual key** 提供四个可选项。它们只作用于这一个 Key，不影响其他 Key。
+
+| 属性 | 作用 |
+| :-- | :-- |
+| Store raw key | 勾选后保存 Key 原文，可在 UI 再次查看；不勾选只保存 SHA-256 哈希，保存后不再显示原文 |
+| Budgets（预算） | 限制这个 Key 能花费的金额或消耗的 token，可按滚动窗口或累计总量控制 |
+| Model access（模型权限） | 限制这个 Key 能请求的模型名；默认 Unrestricted 不限制 |
+| Metadata（元数据） | 给使用这个 Key 的请求附加自定义标记，便于日志与审计区分调用者 |
+
+**Store raw key**
+
+对应配置里的 `key`（原文）与 `keyHash`（`sha256:<hex>` 格式）两种存储方式。哈希方式更安全：配置文件或 UI 泄露时拿不到 Key 原文。
+
+代价是保存后无法再次查看。Key 需在创建时立即复制保管；丢失只能作废重建。
+
+**Budgets**
+
+按 Key 独立计算，在 LLM 响应后扣减。预算依赖上游返回用量与成本数据；上游不上报时，对应请求不会被计费，预算也不能保证绝对不超支。
+
+给外部使用者分配 Key 时建议设置预算，防止单人耗尽上游额度。
+
+**Model access**
+
+三种取值：
+
+- **Unrestricted**：不限制，可请求网关上任何模型。
+- **Selected models**：只允许匹配所填模式的模型，如 `sinomis/gpt-6.1-sol`。
+- **Deny all**：拒绝所有模型。
+
+匹配依据是客户端请求的顶层 model 名，即网关的 Incoming model match。它不约束上游服务内部嵌套的模型调用。
+
+**Metadata**
+
+键值对形式，附着在通过该 Key 认证的请求上，用于日志、审计或按团队区分用量。不参与权限判断。
+
+**给同事发 Key 的推荐组合**
+
+1. Store raw key 不勾选，创建时立即复制交付。
+2. Model access 选 Selected models，只放行业务需要的模型。
+3. Budgets 设置金额或 token 上限。
+4. Metadata 填使用者或团队名。
+
+*本节依据 UI 弹窗与 schema 中 LocalAPIKey 字段核对；尚未实际创建 Key 并验证预算扣减行为。*
+
+
 # 多模型与统一别名
 
 多个 llm.models 项可以使用不同厂商；客户端通过 model 字段选择，不需要切换网关地址。
@@ -566,4 +613,5 @@ Get-Content D:\agw-run.err.log -Tail 30
 - Pi 配置依据：本机安装包 docs/models.md、docs/models-configuration.md。
 - 官方 Key 认证：https://agentgateway.dev/docs/standalone/latest/documentation/configuration/security/apikey-authn/
 - 官方 Virtual API Keys：https://agentgateway.dev/docs/standalone/latest/documentation/llm/cost-controls/virtual-keys/
+- 官方预算限制：https://agentgateway.dev/docs/standalone/latest/documentation/llm/cost-controls/budget-limits/
 - 官方管理 UI 保护：https://agentgateway.dev/docs/standalone/latest/documentation/setup/ui/secure-ui/
