@@ -1,4 +1,4 @@
-> 适用范围：Windows 本地 Standalone 传统 HTTP 网关（`routes` / `tcpRoutes`）。使用时阅读本章；安装与编译见 ../01.快速上手/AgentGateway 快速上手.md；LLM 专用网关见 ../03.LLM网关/LLM网关使用.md。
+> 适用范围：Windows 本地 Standalone 传统 HTTP 网关（`routes` / `tcpRoutes`）。使用时阅读本章；安装与编译见 ../01.快速上手/AgentGateway 快速上手.md；LLM 专用网关见 ../03.LLM网关/01.LLM网关使用.md。
 > 依据：官方文档（来源页见文末）与本地实测。实测二进制：`E:\redfish\AgentGateway\agentgateway.exe`（commit `18f83707`，即 v1.7.0-132-g18f83707）。实测日期：2026-11-16。
 
 # routes 在 agentgateway 中的定位
