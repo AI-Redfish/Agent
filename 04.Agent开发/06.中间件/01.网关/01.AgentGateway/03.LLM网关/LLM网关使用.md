@@ -539,6 +539,25 @@ llm:
 
 
 
+# 双配置模式
+
+agentgateway 一个进程同时提供两类能力：传统网关底座（`routes` 段，详见 ../02.传统HTTP网关routes/传统HTTP网关routes.md）与 AI 快捷层（`llm`、`mcp`、`agent` 段）。本章配置属于 `llm` 快捷层；AI 快捷层最终也走同一数据面。
+
+| 写法 | 描述单位 | 适用 |
+| :-- | :-- | :-- |
+| LLM-based（`llm` 段） | 模型名（可加 header） | 只路由到 LLM；需要 LLM 专属策略 |
+| Routing-based（`routes` 段） | HTTP 路由（path/method/header） | 按路径分流（如 /openai、/anthropic）；LLM 与非 LLM 后端混用；多端口不同内容 |
+
+同一配置文件可混用两种模式，一般一种够用。本章其余内容均基于 `llm` 段模式。
+
+**`llm` 段模式的三点专属能力**（官方 configuration-modes 页）：
+
+1. `llm.models[].matches` 可按 header 匹配分流模型。例：带 `x-org: engineering` 头的请求才路由到某模型，实现按团队分流，不需要 routes 模式。
+2. `llm.policies` 是 LLM 专属策略位：`jwtAuth`（JWT 验证）与 `authorization`（CEL 授权规则，如 `'jwt.email.endsWith("@example.com")'`），可与本章的 API Key 认证叠用，替代“共享一个 Bearer Key”。
+3. `llm`、`mcp`、`ui` 三段都通过 `gateways` 字段挂载到网关；省略时挂 default 网关。配置完全没有 `gateways` 段时，隐式 default 网关：LLM 在 4000、MCP 在 3000。三层结构与监听地址详见 02 章。
+
+*本节依据 configuration-modes 页整理，配置片段经 --validate-only 校验的结论见 02 章实测记录；本节 llm 专属配置未单独实测。*
+
 # 常见问题
 
 | 现象 | 核查内容 |
