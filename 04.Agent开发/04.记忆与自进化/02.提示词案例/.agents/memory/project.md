@@ -19,9 +19,10 @@
 | CLI | `.agents/tools/cli/` |
 | MCP / 工具接口 | `.agents/tools/mcp/` |
 | 知识文档 / 索引 | `.agents/docs/` |
+| 项目规则 / 代码规范 | `.agents/rules/` |
 | 模板 / 示例 / 检查清单 | `.agents/templates/` |
 | 自动化流程 / 工具配置 | `.agents/workflows/` |
-| 上下文交接包 | `.agents/docs/` 下的全新交接文件 |
+| 上下文交接包 | `.agents/out/` 下的全新交接文件 |
 | 审查 / 整理 / 验证日志及必要过程产物 | `.agents/history/` 下的全新文件或独立运行目录 |
 | 冷记忆历史 / 摘要 / 检索记录 | `.agents/history/memory.db`，仅在宿主提供能力且用户授权时启用 |
 
